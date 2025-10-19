@@ -1,0 +1,854 @@
+# Internationalization (i18n) Best Practices
+
+## i18n Strategy
+
+### Supported Languages
+```tsx
+// ✅ Good: Define supported languages and their configurations
+export const SUPPORTED_LOCALES = {
+  en: {
+    name: 'English',
+    flag: '🇺🇸',
+    direction: 'ltr',
+    dateFormat: 'MM/DD/YYYY',
+    numberFormat: 'en-US',
+  },
+  es: {
+    name: 'Español',
+    flag: '🇪🇸',
+    direction: 'ltr',
+    dateFormat: 'DD/MM/YYYY',
+    numberFormat: 'es-ES',
+  },
+  ar: {
+    name: 'العربية',
+    flag: '🇸🇦',
+    direction: 'rtl',
+    dateFormat: 'DD/MM/YYYY',
+    numberFormat: 'ar-SA',
+  },
+  zh: {
+    name: '中文',
+    flag: '🇨🇳',
+    direction: 'ltr',
+    dateFormat: 'YYYY/MM/DD',
+    numberFormat: 'zh-CN',
+  },
+} as const;
+
+export type SupportedLocale = keyof typeof SUPPORTED_LOCALES;
+export type LocaleDirection = 'ltr' | 'rtl';
+```
+
+### Locale Detection
+```tsx
+// ✅ Good: Automatic locale detection with fallbacks
+export function detectUserLocale(): SupportedLocale {
+  // Check localStorage first
+  const storedLocale = localStorage.getItem('preferred-locale') as SupportedLocale;
+  if (storedLocale && SUPPORTED_LOCALES[storedLocale]) {
+    return storedLocale;
+  }
+
+  // Check browser language
+  const browserLocale = navigator.language.split('-')[0] as SupportedLocale;
+  if (SUPPORTED_LOCALES[browserLocale]) {
+    return browserLocale;
+  }
+
+  // Check accept-language header (server-side)
+  // This would be handled in Next.js middleware
+
+  // Default fallback
+  return 'en';
+}
+```
+
+## Next.js i18n Setup
+
+### Configuration
+```tsx
+// next.config.js
+const withNextIntl = require('next-intl/plugin')();
+
+module.exports = withNextIntl({
+  // Other Next.js config...
+  i18n: {
+    locales: ['en', 'es', 'ar', 'zh'],
+    defaultLocale: 'en',
+    localeDetection: true,
+  },
+});
+
+// middleware.ts
+import createMiddleware from 'next-intl/middleware';
+import { SUPPORTED_LOCALES } from '@/lib/i18n/config';
+
+export default createMiddleware({
+  locales: Object.keys(SUPPORTED_LOCALES),
+  defaultLocale: 'en',
+  localePrefix: 'as-needed', // Only show locale in URL when not default
+});
+
+export const config = {
+  matcher: ['/((?!api|_next|_vercel|.*\\..*).*)'],
+};
+```
+
+### App Router Structure
+```tsx
+// app/[locale]/layout.tsx
+import { NextIntlClientProvider } from 'next-intl';
+import { getMessages } from 'next-intl/server';
+import { SUPPORTED_LOCALES } from '@/lib/i18n/config';
+
+export async function generateStaticParams() {
+  return Object.keys(SUPPORTED_LOCALES).map((locale) => ({ locale }));
+}
+
+export default async function LocaleLayout({
+  children,
+  params: { locale },
+}: {
+  children: React.ReactNode;
+  params: { locale: SupportedLocale };
+}) {
+  const messages = await getMessages();
+  const direction = SUPPORTED_LOCALES[locale].direction;
+
+  return (
+    <html lang={locale} dir={direction}>
+      <body dir={direction}>
+        <NextIntlClientProvider messages={messages}>
+          {children}
+        </NextIntlClientProvider>
+      </body>
+    </html>
+  );
+}
+
+// app/[locale]/page.tsx
+import { useTranslations } from 'next-intl';
+
+export default function HomePage() {
+  const t = useTranslations('home');
+  
+  return (
+    <div>
+      <h1>{t('title')}</h1>
+      <p>{t('description')}</p>
+    </div>
+  );
+}
+```
+
+## Translation Management
+
+### Message Files Structure
+```tsx
+// messages/en.json
+{
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "search": "Search",
+    "filter": "Filter",
+    "sort": "Sort",
+    "next": "Next",
+    "previous": "Previous"
+  },
+  "navigation": {
+    "home": "Home",
+    "about": "About",
+    "contact": "Contact",
+    "dashboard": "Dashboard",
+    "profile": "Profile",
+    "settings": "Settings"
+  },
+  "home": {
+    "title": "Welcome to Vanwyck",
+    "description": "Build amazing applications with our platform",
+    "cta": "Get Started",
+    "features": {
+      "title": "Features",
+      "performance": "High Performance",
+      "security": "Enterprise Security",
+      "scalability": "Scalable Architecture"
+    }
+  },
+  "forms": {
+    "validation": {
+      "required": "This field is required",
+      "email": "Please enter a valid email address",
+      "minLength": "Must be at least {min} characters",
+      "maxLength": "Must be no more than {max} characters"
+    }
+  },
+  "dates": {
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "tomorrow": "Tomorrow",
+    "formats": {
+      "short": "MMM d, yyyy",
+      "long": "MMMM d, yyyy",
+      "time": "h:mm a"
+    }
+  }
+}
+
+// messages/es.json
+{
+  "common": {
+    "loading": "Cargando...",
+    "error": "Ocurrió un error",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "search": "Buscar",
+    "filter": "Filtrar",
+    "sort": "Ordenar",
+    "next": "Siguiente",
+    "previous": "Anterior"
+  },
+  "navigation": {
+    "home": "Inicio",
+    "about": "Acerca de",
+    "contact": "Contacto",
+    "dashboard": "Panel",
+    "profile": "Perfil",
+    "settings": "Configuración"
+  },
+  "home": {
+    "title": "Bienvenido a Vanwyck",
+    "description": "Construye aplicaciones increíbles con nuestra plataforma",
+    "cta": "Comenzar",
+    "features": {
+      "title": "Características",
+      "performance": "Alto Rendimiento",
+      "security": "Seguridad Empresarial",
+      "scalability": "Arquitectura Escalable"
+    }
+  }
+}
+```
+
+### Translation Hooks
+```tsx
+// hooks/useTranslations.ts
+import { useTranslations, useLocale } from 'next-intl';
+import { SUPPORTED_LOCALES } from '@/lib/i18n/config';
+
+export function useAppTranslations() {
+  const t = useTranslations();
+  const locale = useLocale();
+  const direction = SUPPORTED_LOCALES[locale as SupportedLocale]?.direction || 'ltr';
+
+  return {
+    t,
+    locale,
+    direction,
+    isRTL: direction === 'rtl',
+    formatMessage: (key: string, values?: Record<string, any>) => t(key, values),
+  };
+}
+
+// Custom hook for form validation messages
+export function useValidationMessages() {
+  const t = useTranslations('forms.validation');
+  
+  return {
+    required: t('required'),
+    email: t('email'),
+    minLength: (min: number) => t('minLength', { min }),
+    maxLength: (max: number) => t('maxLength', { max }),
+    custom: (key: string, values?: Record<string, any>) => t(key, values),
+  };
+}
+
+// Hook for date/time translations
+export function useDateTranslations() {
+  const t = useTranslations('dates');
+  
+  return {
+    today: t('today'),
+    yesterday: t('yesterday'),
+    tomorrow: t('tomorrow'),
+    formats: {
+      short: t('formats.short'),
+      long: t('formats.long'),
+      time: t('formats.time'),
+    },
+  };
+}
+```
+
+## RTL (Right-to-Left) Support
+
+### RTL Layout Components
+```tsx
+// components/RTLProvider.tsx
+"use client";
+import { createContext, useContext, ReactNode } from 'react';
+import { SUPPORTED_LOCALES } from '@/lib/i18n/config';
+
+interface RTLContextType {
+  direction: LocaleDirection;
+  isRTL: boolean;
+}
+
+const RTLContext = createContext<RTLContextType | null>(null);
+
+export function RTLProvider({ 
+  children, 
+  locale 
+}: { 
+  children: ReactNode;
+  locale: SupportedLocale;
+}) {
+  const direction = SUPPORTED_LOCALES[locale].direction;
+  const isRTL = direction === 'rtl';
+
+  return (
+    <RTLContext.Provider value={{ direction, isRTL }}>
+      <div dir={direction} className={`rtl-${direction}`}>
+        {children}
+      </div>
+    </RTLContext.Provider>
+  );
+}
+
+export function useRTL() {
+  const context = useContext(RTLContext);
+  if (!context) {
+    throw new Error('useRTL must be used within RTLProvider');
+  }
+  return context;
+}
+
+// components/RTLWrapper.tsx
+export function RTLWrapper({ children }: { children: React.ReactNode }) {
+  const { direction, isRTL } = useRTL();
+  
+  return (
+    <div 
+      dir={direction}
+      className={`
+        rtl-wrapper
+        rtl-${direction}
+        ${isRTL ? 'rtl' : 'ltr'}
+      `}
+    >
+      {children}
+    </div>
+  );
+}
+```
+
+### RTL CSS Utilities
+```tsx
+// styles/rtl.css
+/* RTL-specific styles */
+.rtl-rtl {
+  direction: rtl;
+  text-align: right;
+}
+
+.rtl-rtl .ltr-only {
+  display: none;
+}
+
+.rtl-ltr .rtl-only {
+  display: none;
+}
+
+/* RTL-aware margins and paddings */
+.rtl-rtl .ml-4 {
+  margin-left: 0;
+  margin-right: 1rem;
+}
+
+.rtl-rtl .mr-4 {
+  margin-right: 0;
+  margin-left: 1rem;
+}
+
+.rtl-rtl .pl-4 {
+  padding-left: 0;
+  padding-right: 1rem;
+}
+
+.rtl-rtl .pr-4 {
+  padding-right: 0;
+  padding-left: 1rem;
+}
+
+/* RTL-aware positioning */
+.rtl-rtl .left-0 {
+  left: auto;
+  right: 0;
+}
+
+.rtl-rtl .right-0 {
+  right: auto;
+  left: 0;
+}
+
+/* RTL-aware transforms */
+.rtl-rtl .rotate-180 {
+  transform: rotate(-180deg);
+}
+
+/* RTL-aware icons */
+.rtl-rtl .icon-arrow-right {
+  transform: scaleX(-1);
+}
+
+.rtl-rtl .icon-arrow-left {
+  transform: scaleX(-1);
+}
+```
+
+### RTL-Aware Components
+```tsx
+// components/RTLIcon.tsx
+import { useRTL } from './RTLProvider';
+
+interface RTLIconProps {
+  icon: React.ComponentType<{ className?: string }>;
+  className?: string;
+  flipInRTL?: boolean;
+}
+
+export function RTLIcon({ icon: Icon, className, flipInRTL = false }: RTLIconProps) {
+  const { isRTL } = useRTL();
+  
+  return (
+    <Icon 
+      className={`
+        ${className || ''}
+        ${flipInRTL && isRTL ? 'rtl-flipped' : ''}
+      `}
+    />
+  );
+}
+
+// components/RTLButton.tsx
+export function RTLButton({ 
+  children, 
+  icon, 
+  iconPosition = 'left',
+  ...props 
+}: ButtonProps) {
+  const { isRTL } = useRTL();
+  
+  // In RTL, left becomes right and vice versa
+  const actualIconPosition = isRTL 
+    ? (iconPosition === 'left' ? 'right' : 'left')
+    : iconPosition;
+  
+  return (
+    <button {...props}>
+      {icon && actualIconPosition === 'left' && (
+        <RTLIcon icon={icon} className="mr-2" />
+      )}
+      {children}
+      {icon && actualIconPosition === 'right' && (
+        <RTLIcon icon={icon} className="ml-2" />
+      )}
+    </button>
+  );
+}
+```
+
+## Date and Number Formatting
+
+### Localized Formatting
+```tsx
+// lib/formatting.ts
+import { format, formatRelative, formatDistance } from 'date-fns';
+import { 
+  enUS, 
+  es, 
+  ar, 
+  zhCN 
+} from 'date-fns/locale';
+import { SUPPORTED_LOCALES } from './i18n/config';
+
+const dateLocales = {
+  en: enUS,
+  es: es,
+  ar: ar,
+  zh: zhCN,
+};
+
+export function formatDate(
+  date: Date | string | number,
+  formatString: string,
+  locale: SupportedLocale = 'en'
+) {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  const localeObj = dateLocales[locale];
+  
+  return format(dateObj, formatString, { locale: localeObj });
+}
+
+export function formatRelativeDate(
+  date: Date | string | number,
+  baseDate: Date | string | number = new Date(),
+  locale: SupportedLocale = 'en'
+) {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  const baseDateObj = typeof baseDate === 'string' ? new Date(baseDate) : baseDate;
+  const localeObj = dateLocales[locale];
+  
+  return formatRelative(dateObj, baseDateObj, { locale: localeObj });
+}
+
+export function formatDistance(
+  date: Date | string | number,
+  baseDate: Date | string | number = new Date(),
+  locale: SupportedLocale = 'en'
+) {
+  const dateObj = typeof date === 'string' ? new Date(date) : date;
+  const baseDateObj = typeof baseDate === 'string' ? new Date(baseDate) : baseDate;
+  const localeObj = dateLocales[locale];
+  
+  return formatDistance(dateObj, baseDateObj, { locale: localeObj });
+}
+
+// Number formatting
+export function formatNumber(
+  number: number,
+  locale: SupportedLocale = 'en',
+  options?: Intl.NumberFormatOptions
+) {
+  const localeString = SUPPORTED_LOCALES[locale].numberFormat;
+  
+  return new Intl.NumberFormat(localeString, options).format(number);
+}
+
+export function formatCurrency(
+  amount: number,
+  currency: string = 'USD',
+  locale: SupportedLocale = 'en'
+) {
+  const localeString = SUPPORTED_LOCALES[locale].numberFormat;
+  
+  return new Intl.NumberFormat(localeString, {
+    style: 'currency',
+    currency,
+  }).format(amount);
+}
+
+export function formatPercent(
+  value: number,
+  locale: SupportedLocale = 'en',
+  decimals: number = 2
+) {
+  const localeString = SUPPORTED_LOCALES[locale].numberFormat;
+  
+  return new Intl.NumberFormat(localeString, {
+    style: 'percent',
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(value / 100);
+}
+```
+
+### Pluralization Support
+```tsx
+// lib/pluralization.ts
+interface PluralRule {
+  zero?: string;
+  one: string;
+  other: string;
+}
+
+export function getPluralForm(
+  count: number,
+  locale: SupportedLocale,
+  forms: PluralRule
+): string {
+  // English pluralization
+  if (locale === 'en') {
+    if (count === 0 && forms.zero) return forms.zero;
+    if (count === 1) return forms.one;
+    return forms.other;
+  }
+  
+  // Spanish pluralization
+  if (locale === 'es') {
+    if (count === 0 && forms.zero) return forms.zero;
+    if (count === 1) return forms.one;
+    return forms.other;
+  }
+  
+  // Arabic pluralization (more complex)
+  if (locale === 'ar') {
+    if (count === 0 && forms.zero) return forms.zero;
+    if (count === 1) return forms.one;
+    if (count === 2) return forms.two || forms.other;
+    if (count >= 3 && count <= 10) return forms.few || forms.other;
+    return forms.other;
+  }
+  
+  // Chinese (no pluralization)
+  if (locale === 'zh') {
+    return forms.other;
+  }
+  
+  // Default fallback
+  return count === 1 ? forms.one : forms.other;
+}
+
+// Usage example
+export function getItemCountText(count: number, locale: SupportedLocale) {
+  return getPluralForm(count, locale, {
+    zero: 'No items',
+    one: '1 item',
+    other: `${count} items`,
+  });
+}
+```
+
+## Language Switching
+
+### Language Switcher Component
+```tsx
+// components/LanguageSwitcher.tsx
+"use client";
+import { useRouter, usePathname } from 'next/navigation';
+import { useLocale } from 'next-intl';
+import { SUPPORTED_LOCALES } from '@/lib/i18n/config';
+import { useRTL } from './RTLProvider';
+
+export function LanguageSwitcher() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const currentLocale = useLocale();
+  const { direction } = useRTL();
+
+  const handleLanguageChange = (newLocale: SupportedLocale) => {
+    // Remove current locale from pathname
+    const pathWithoutLocale = pathname.replace(`/${currentLocale}`, '');
+    
+    // Construct new path with new locale
+    const newPath = newLocale === 'en' 
+      ? pathWithoutLocale || '/'
+      : `/${newLocale}${pathWithoutLocale || ''}`;
+    
+    router.push(newPath);
+  };
+
+  return (
+    <div className="language-switcher">
+      <select
+        value={currentLocale}
+        onChange={(e) => handleLanguageChange(e.target.value as SupportedLocale)}
+        className="language-select"
+        aria-label="Select language"
+      >
+        {Object.entries(SUPPORTED_LOCALES).map(([code, config]) => (
+          <option key={code} value={code}>
+            {config.flag} {config.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+// components/LanguageToggle.tsx
+export function LanguageToggle() {
+  const { locale, direction } = useRTL();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const toggleLanguage = () => {
+    const currentLocale = locale as SupportedLocale;
+    const locales = Object.keys(SUPPORTED_LOCALES) as SupportedLocale[];
+    const currentIndex = locales.indexOf(currentLocale);
+    const nextIndex = (currentIndex + 1) % locales.length;
+    const nextLocale = locales[nextIndex];
+    
+    const pathWithoutLocale = pathname.replace(`/${currentLocale}`, '');
+    const newPath = nextLocale === 'en' 
+      ? pathWithoutLocale || '/'
+      : `/${nextLocale}${pathWithoutLocale || ''}`;
+    
+    router.push(newPath);
+  };
+
+  return (
+    <button
+      onClick={toggleLanguage}
+      className="language-toggle"
+      aria-label={`Switch to ${SUPPORTED_LOCALES[locale as SupportedLocale].name}`}
+    >
+      {SUPPORTED_LOCALES[locale as SupportedLocale].flag}
+    </button>
+  );
+}
+```
+
+## SEO and Meta Tags
+
+### Localized Meta Tags
+```tsx
+// app/[locale]/layout.tsx
+import { Metadata } from 'next';
+import { SUPPORTED_LOCALES } from '@/lib/i18n/config';
+
+export async function generateMetadata({ 
+  params: { locale } 
+}: { 
+  params: { locale: SupportedLocale } 
+}): Promise<Metadata> {
+  const localeConfig = SUPPORTED_LOCALES[locale];
+  
+  return {
+    title: {
+      template: `%s | Vanwyck`,
+      default: 'Vanwyck - Build Amazing Applications',
+    },
+    description: locale === 'en' 
+      ? 'Build amazing applications with our platform'
+      : locale === 'es'
+      ? 'Construye aplicaciones increíbles con nuestra plataforma'
+      : 'Build amazing applications with our platform',
+    alternates: {
+      canonical: '/',
+      languages: Object.fromEntries(
+        Object.keys(SUPPORTED_LOCALES).map(loc => [
+          loc,
+          `/${loc === 'en' ? '' : loc}`
+        ])
+      ),
+    },
+    openGraph: {
+      locale: locale,
+      alternateLocale: Object.keys(SUPPORTED_LOCALES).filter(l => l !== locale),
+    },
+  };
+}
+
+// components/LocalizedHead.tsx
+export function LocalizedHead({ 
+  title, 
+  description, 
+  keywords 
+}: LocalizedHeadProps) {
+  const { locale } = useAppTranslations();
+  
+  return (
+    <Head>
+      <title>{title}</title>
+      <meta name="description" content={description} />
+      <meta name="keywords" content={keywords} />
+      
+      {/* Language alternatives */}
+      {Object.keys(SUPPORTED_LOCALES).map(loc => (
+        <link
+          key={loc}
+          rel="alternate"
+          hrefLang={loc}
+          href={`/${loc === 'en' ? '' : loc}`}
+        />
+      ))}
+      
+      {/* Default language */}
+      <link rel="alternate" hrefLang="x-default" href="/" />
+    </Head>
+  );
+}
+```
+
+## Testing i18n
+
+### Translation Testing
+```tsx
+// test/setup/i18n.ts
+import { render } from '@testing-library/react';
+import { NextIntlClientProvider } from 'next-intl';
+import messages from '@/messages/en.json';
+
+export function renderWithIntl(
+  ui: React.ReactElement,
+  locale = 'en',
+  messagesOverride = messages
+) {
+  return render(
+    <NextIntlClientProvider messages={messagesOverride} locale={locale}>
+      {ui}
+    </NextIntlClientProvider>
+  );
+}
+
+// test/components/LanguageSwitcher.test.tsx
+import { render, screen, fireEvent } from '@testing-library/react';
+import { LanguageSwitcher } from '../LanguageSwitcher';
+import { renderWithIntl } from '@/test/setup/i18n';
+
+describe('LanguageSwitcher', () => {
+  it('should display all supported languages', () => {
+    renderWithIntl(<LanguageSwitcher />);
+    
+    expect(screen.getByText('🇺🇸 English')).toBeInTheDocument();
+    expect(screen.getByText('🇪🇸 Español')).toBeInTheDocument();
+    expect(screen.getByText('🇸🇦 العربية')).toBeInTheDocument();
+    expect(screen.getByText('🇨🇳 中文')).toBeInTheDocument();
+  });
+
+  it('should handle language change', () => {
+    const mockRouter = { push: jest.fn() };
+    jest.spyOn(require('next/navigation'), 'useRouter').mockReturnValue(mockRouter);
+    
+    renderWithIntl(<LanguageSwitcher />);
+    
+    const select = screen.getByRole('combobox');
+    fireEvent.change(select, { target: { value: 'es' } });
+    
+    expect(mockRouter.push).toHaveBeenCalledWith('/es');
+  });
+});
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Use Next.js built-in i18n support
+- Implement proper locale detection
+- Support RTL languages (Arabic, Hebrew)
+- Use translation keys instead of hardcoded text
+- Implement proper pluralization rules
+- Format dates, numbers, and currencies locally
+- Provide language alternatives in meta tags
+- Test with multiple languages and RTL layouts
+
+### ❌ Don'ts
+- Don't hardcode text strings in components
+- Don't forget to handle RTL layouts
+- Don't ignore pluralization rules
+- Don't forget to update meta tags for each locale
+- Don't assume all languages work the same way
+- Don't forget to test with actual users speaking those languages
+
+### 🎯 Implementation Checklist
+- [ ] Set up Next.js i18n configuration
+- [ ] Create message files for all supported languages
+- [ ] Implement locale detection and switching
+- [ ] Add RTL support for applicable languages
+- [ ] Implement localized formatting (dates, numbers, currency)
+- [ ] Add pluralization support
+- [ ] Update meta tags and SEO for each locale
+- [ ] Test with multiple languages and RTL layouts
+- [ ] Implement proper fallbacks for missing translations
+description:
+globs:
+alwaysApply: false
+---

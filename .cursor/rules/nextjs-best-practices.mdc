@@ -1,0 +1,98 @@
+# Next.js Best Practices (App Router)
+
+## Component Patterns
+
+### Server Components (Default)
+```tsx
+// ✅ Good: Server Component
+export default async function UserList() {
+  const users = await prisma.user.findMany();
+  return (
+    <ul>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  );
+}
+```
+
+### Client Components (When Needed)
+```tsx
+"use client"; // Only add when you need interactivity
+
+import { useState } from 'react';
+
+export default function Counter() {
+  const [count, setCount] = useState(0);
+  return (
+    <button onClick={() => setCount(count + 1)}>
+      Count: {count}
+    </button>
+  );
+}
+```
+
+## File Structure
+- `app/page.tsx` - Homepage
+- `app/(auth)/signin/page.tsx` - Route groups for organization
+- `app/api/users/route.ts` - API endpoints
+- `app/layout.tsx` - Root layout
+- `app/loading.tsx` - Loading UI
+- `app/error.tsx` - Error boundaries
+
+## Data Fetching
+- Use Server Components for initial data fetch
+- Implement loading.tsx for better UX
+- Use React Suspense boundaries with streaming
+- Cache data with Next.js built-in caching (ISR, Route Handlers)
+- Use `unstable_cache()` for expensive computations
+- Implement proper error boundaries with error.tsx
+- Use parallel data fetching with Promise.allSettled()
+- Leverage React 18 use() hook for data fetching in components
+
+## API Routes
+```tsx
+// app/api/users/route.ts
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+
+export async function GET() {
+  try {
+    const users = await prisma.user.findMany();
+    return NextResponse.json(users);
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to fetch users' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const user = await prisma.user.create({ data: body });
+    return NextResponse.json(user, { status: 201 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to create user' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+## Performance Tips
+- Use `next/image` with priority for above-the-fold images
+- Implement proper loading states with React Suspense
+- Use React.memo() sparingly, prefer Server Components
+- Leverage Next.js built-in optimizations (ISR, Edge Runtime)
+- Use streaming for large data sets
+- Implement proper caching strategies (Route Handlers, ISR)
+- Use `unstable_noStore()` for dynamic content that shouldn't be cached
+- Leverage React 18 concurrent features
+description:
+globs:
+alwaysApply: false
+---

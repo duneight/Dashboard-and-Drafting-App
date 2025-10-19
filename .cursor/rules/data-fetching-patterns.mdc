@@ -1,0 +1,799 @@
+# Data Fetching & Server State Management Best Practices
+
+## Data Fetching Strategy
+
+### Core Principles
+```tsx
+// ✅ Good: Data fetching principles
+// - Server state vs client state separation
+// - Optimistic updates for better UX
+// - Background refetching for data freshness
+// - Error boundaries and fallback states
+// - Caching strategies for performance
+// - Request deduplication and batching
+```
+
+### State Management Architecture
+```tsx
+// ✅ Good: Clear separation of concerns
+type ApplicationState = {
+  serverState: ServerState;    // Data from APIs (users, posts, etc.)
+  clientState: ClientState;    // UI state (modals, forms, etc.)
+  cacheState: CacheState;      // Optimized data storage
+  optimisticState: OptimisticState; // Pending changes
+};
+
+type ServerState = {
+  users: User[];
+  posts: Post[];
+  categories: Category[];
+  // ... other server data
+};
+
+type ClientState = {
+  ui: {
+    modals: ModalState;
+    forms: FormState;
+    navigation: NavigationState;
+  };
+  preferences: UserPreferences;
+  // ... other client-only data
+};
+```
+
+## React Query (TanStack Query) Patterns
+
+### Query Configuration
+```tsx
+// lib/query/config.ts
+import { QueryClient } from '@tanstack/react-query';
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      // Global query defaults
+      staleTime: 5 * 60 * 1000,        // 5 minutes
+      gcTime: 10 * 60 * 1000,          // 10 minutes (formerly cacheTime)
+      retry: (failureCount, error) => {
+        // Don't retry on 4xx errors
+        if (error?.status >= 400 && error?.status < 500) {
+          return false;
+        }
+        return failureCount < 3;
+      },
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: true,
+    },
+    mutations: {
+      // Global mutation defaults
+      retry: false,
+      onError: (error) => {
+        console.error('Mutation error:', error);
+        // Global error handling
+      },
+    },
+  },
+});
+
+// Query key factory for consistency
+export const queryKeys = {
+  users: {
+    all: ['users'] as const,
+    lists: () => [...queryKeys.users.all, 'list'] as const,
+    list: (filters: UserFilters) => [...queryKeys.users.lists(), filters] as const,
+    details: () => [...queryKeys.users.all, 'detail'] as const,
+    detail: (id: string) => [...queryKeys.users.details(), id] as const,
+  },
+  posts: {
+    all: ['posts'] as const,
+    lists: () => [...queryKeys.posts.all, 'list'] as const,
+    list: (filters: PostFilters) => [...queryKeys.posts.lists(), filters] as const,
+    details: () => [...queryKeys.posts.all, 'detail'] as const,
+    detail: (id: string) => [...queryKeys.posts.details(), id] as const,
+    byUser: (userId: string) => [...queryKeys.posts.all, 'user', userId] as const,
+  },
+  categories: {
+    all: ['categories'] as const,
+    lists: () => [...queryKeys.categories.all, 'list'] as const,
+    list: (filters: CategoryFilters) => [...queryKeys.categories.lists(), filters] as const,
+    details: () => [...queryKeys.categories.all, 'detail'] as const,
+    detail: (id: string) => [...queryKeys.categories.details(), id] as const,
+  },
+} as const;
+```
+
+### Custom Hooks for Data Fetching
+```tsx
+// hooks/useUsers.ts
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { queryKeys } from '@/lib/query/config';
+import { userAPI } from '@/lib/api/users';
+import type { User, CreateUserInput, UpdateUserInput, UserFilters } from '@/types';
+
+export const useUsers = (filters: UserFilters = {}) => {
+  return useQuery({
+    queryKey: queryKeys.users.list(filters),
+    queryFn: () => userAPI.getUsers(filters),
+    select: (data) => ({
+      users: data.data,
+      pagination: data.meta.pagination,
+      total: data.meta.pagination.total,
+    }),
+  });
+};
+
+export const useUser = (id: string) => {
+  return useQuery({
+    queryKey: queryKeys.users.detail(id),
+    queryFn: () => userAPI.getUser(id),
+    select: (data) => data.data,
+    enabled: !!id,
+  });
+};
+
+export const useCreateUser = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: (input: CreateUserInput) => userAPI.createUser(input),
+    onSuccess: (newUser) => {
+      // Optimistically update the cache
+      queryClient.setQueryData(
+        queryKeys.users.lists(),
+        (old: any) => ({
+          ...old,
+          users: [newUser.data, ...(old?.users || [])],
+          pagination: {
+            ...old?.pagination,
+            total: (old?.pagination?.total || 0) + 1,
+          },
+        })
+      );
+      
+      // Invalidate and refetch user lists
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.users.lists(),
+      });
+    },
+    onError: (error) => {
+      // Handle error (show toast, etc.)
+      console.error('Failed to create user:', error);
+    },
+  });
+};
+
+export const useUpdateUser = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateUserInput }) =>
+      userAPI.updateUser(id, input),
+    onMutate: async ({ id, input }) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({
+        queryKey: queryKeys.users.detail(id),
+      });
+
+      // Snapshot previous value
+      const previousUser = queryClient.getQueryData(
+        queryKeys.users.detail(id)
+      );
+
+      // Optimistically update
+      queryClient.setQueryData(
+        queryKeys.users.detail(id),
+        (old: any) => ({ ...old, ...input })
+      );
+
+      // Return context for rollback
+      return { previousUser };
+    },
+    onError: (err, { id }, context) => {
+      // Rollback on error
+      if (context?.previousUser) {
+        queryClient.setQueryData(
+          queryKeys.users.detail(id),
+          context.previousUser
+        );
+      }
+    },
+    onSettled: (data, error, { id }) => {
+      // Always refetch after mutation
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.users.detail(id),
+      });
+    },
+  });
+};
+
+export const useDeleteUser = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: (id: string) => userAPI.deleteUser(id),
+    onSuccess: (_, id) => {
+      // Remove from cache
+      queryClient.removeQueries({
+        queryKey: queryKeys.users.detail(id),
+      });
+      
+      // Invalidate lists
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.users.lists(),
+      });
+    },
+  });
+};
+```
+
+### Infinite Queries for Pagination
+```tsx
+// hooks/useInfiniteUsers.ts
+import { useInfiniteQuery } from '@tanstack/react-query';
+import { userAPI } from '@/lib/api/users';
+import { queryKeys } from '@/lib/query/config';
+
+export const useInfiniteUsers = (filters: Omit<UserFilters, 'page'> = {}) => {
+  return useInfiniteQuery({
+    queryKey: queryKeys.users.list(filters),
+    queryFn: ({ pageParam = 1 }) =>
+      userAPI.getUsers({ ...filters, page: pageParam }),
+    initialPageParam: 1,
+    getNextPageParam: (lastPage) => {
+      const { page, totalPages } = lastPage.meta.pagination;
+      return page < totalPages ? page + 1 : undefined;
+    },
+    getPreviousPageParam: (firstPage) => {
+      const { page } = firstPage.meta.pagination;
+      return page > 1 ? page - 1 : undefined;
+    },
+    select: (data) => ({
+      users: data.pages.flatMap(page => page.data),
+      pagination: data.pages[data.pages.length - 1]?.meta.pagination,
+      total: data.pages[0]?.meta.pagination.total || 0,
+    }),
+  });
+};
+```
+
+## SWR Alternative Implementation
+
+### SWR Configuration
+```tsx
+// lib/swr/config.ts
+import { SWRConfig } from 'swr';
+
+export const swrConfig = {
+  // Global SWR configuration
+  errorRetryCount: 3,
+  errorRetryInterval: 5000,
+  focusThrottleInterval: 5000,
+  dedupingInterval: 2000,
+  loadingTimeout: 3000,
+  onError: (error: any) => {
+    console.error('SWR Error:', error);
+    // Global error handling
+  },
+  onSuccess: (data: any) => {
+    // Global success handling
+  },
+  // Custom fetcher
+  fetcher: async (url: string) => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return response.json();
+  },
+};
+
+// SWR Provider component
+export const SWRProvider = ({ children }: { children: React.ReactNode }) => {
+  return (
+    <SWRConfig value={swrConfig}>
+      {children}
+    </SWRConfig>
+  );
+};
+```
+
+### SWR Custom Hooks
+```tsx
+// hooks/useSWRUsers.ts
+import useSWR, { mutate } from 'swr';
+import { userAPI } from '@/lib/api/users';
+import type { User, UserFilters } from '@/types';
+
+const USERS_CACHE_KEY = 'users';
+
+export const useUsers = (filters: UserFilters = {}) => {
+  const cacheKey = [USERS_CACHE_KEY, filters];
+  
+  const { data, error, isLoading, mutate: mutateUsers } = useSWR(
+    cacheKey,
+    () => userAPI.getUsers(filters),
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: true,
+      dedupingInterval: 5000,
+    }
+  );
+
+  return {
+    users: data?.data || [],
+    pagination: data?.meta?.pagination,
+    total: data?.meta?.pagination?.total || 0,
+    isLoading,
+    error,
+    mutate: mutateUsers,
+  };
+};
+
+export const useUser = (id: string) => {
+  const cacheKey = [USERS_CACHE_KEY, 'detail', id];
+  
+  const { data, error, isLoading, mutate: mutateUser } = useSWR(
+    id ? cacheKey : null,
+    () => userAPI.getUser(id),
+    {
+      revalidateOnFocus: false,
+    }
+  );
+
+  return {
+    user: data?.data,
+    isLoading,
+    error,
+    mutate: mutateUser,
+  };
+};
+
+// Optimistic updates with SWR
+export const updateUserOptimistically = async (
+  id: string,
+  updates: Partial<User>
+) => {
+  const cacheKey = [USERS_CACHE_KEY, 'detail', id];
+  
+  // Optimistically update the cache
+  mutate(
+    cacheKey,
+    (current: any) => ({ ...current, ...updates }),
+    false
+  );
+
+  try {
+    // Make the actual API call
+    const updatedUser = await userAPI.updateUser(id, updates);
+    
+    // Update cache with real data
+    mutate(cacheKey, updatedUser);
+    
+    // Invalidate related queries
+    mutate([USERS_CACHE_KEY]);
+    
+    return updatedUser;
+  } catch (error) {
+    // Revert optimistic update on error
+    mutate(cacheKey);
+    throw error;
+  }
+};
+```
+
+## Server State Synchronization
+
+### Background Sync Strategies
+```tsx
+// lib/sync/background-sync.ts
+import { queryClient } from '@/lib/query/config';
+
+export class BackgroundSync {
+  private intervals: Map<string, NodeJS.Timeout> = new Map();
+  private syncQueue: Array<() => Promise<void>> = [];
+  private isOnline = navigator.onLine;
+
+  constructor() {
+    this.setupOnlineOfflineHandling();
+  }
+
+  // Start background sync for specific data
+  startSync = (key: string, syncFn: () => Promise<void>, intervalMs: number) => {
+    if (this.intervals.has(key)) {
+      this.stopSync(key);
+    }
+
+    const interval = setInterval(async () => {
+      if (this.isOnline) {
+        try {
+          await syncFn();
+        } catch (error) {
+          console.error(`Background sync failed for ${key}:`, error);
+        }
+      }
+    }, intervalMs);
+
+    this.intervals.set(key, interval);
+  };
+
+  // Stop background sync
+  stopSync = (key: string) => {
+    const interval = this.intervals.get(key);
+    if (interval) {
+      clearInterval(interval);
+      this.intervals.delete(key);
+    }
+  };
+
+  // Queue sync operations when offline
+  queueSync = (syncFn: () => Promise<void>) => {
+    this.syncQueue.push(syncFn);
+  };
+
+  // Process queued sync operations when back online
+  private processSyncQueue = async () => {
+    if (!this.isOnline || this.syncQueue.length === 0) return;
+
+    const queue = [...this.syncQueue];
+    this.syncQueue = [];
+
+    for (const syncFn of queue) {
+      try {
+        await syncFn();
+      } catch (error) {
+        console.error('Failed to process queued sync:', error);
+        // Re-queue failed operations
+        this.syncQueue.push(syncFn);
+      }
+    }
+  };
+
+  private setupOnlineOfflineHandling = () => {
+    window.addEventListener('online', () => {
+      this.isOnline = true;
+      this.processSyncQueue();
+    });
+
+    window.addEventListener('offline', () => {
+      this.isOnline = false;
+    });
+  };
+
+  // Cleanup
+  destroy = () => {
+    this.intervals.forEach(clearInterval);
+    this.intervals.clear();
+    this.syncQueue = [];
+  };
+}
+
+// Global background sync instance
+export const backgroundSync = new BackgroundSync();
+```
+
+### Data Synchronization Hooks
+```tsx
+// hooks/useDataSync.ts
+import { useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { backgroundSync } from '@/lib/sync/background-sync';
+
+export const useDataSync = (
+  queryKey: readonly unknown[],
+  syncInterval: number = 30000 // 30 seconds
+) => {
+  const queryClient = useQueryClient();
+  const syncRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    // Create sync function
+    const syncFn = async () => {
+      await queryClient.invalidateQueries({ queryKey });
+    };
+
+    syncRef.current = syncFn;
+
+    // Start background sync
+    backgroundSync.startSync(
+      queryKey.join('-'),
+      syncFn,
+      syncInterval
+    );
+
+    return () => {
+      // Stop sync on unmount
+      backgroundSync.stopSync(queryKey.join('-'));
+    };
+  }, [queryKey, syncInterval, queryClient]);
+
+  // Manual sync function
+  const manualSync = async () => {
+    if (syncRef.current) {
+      await syncRef.current();
+    }
+  };
+
+  return { manualSync };
+};
+```
+
+## Request Deduplication & Batching
+
+### Request Deduplication
+```tsx
+// lib/api/request-deduplication.ts
+class RequestDeduplicator {
+  private pendingRequests = new Map<string, Promise<any>>();
+
+  async deduplicate<T>(
+    key: string,
+    requestFn: () => Promise<T>
+  ): Promise<T> {
+    // If request is already pending, return the existing promise
+    if (this.pendingRequests.has(key)) {
+      return this.pendingRequests.get(key)!;
+    }
+
+    // Create new request
+    const requestPromise = requestFn().finally(() => {
+      // Clean up after request completes
+      this.pendingRequests.delete(key);
+    });
+
+    // Store the promise
+    this.pendingRequests.set(key, requestPromise);
+
+    return requestPromise;
+  }
+
+  // Clear all pending requests
+  clear() {
+    this.pendingRequests.clear();
+  }
+}
+
+export const requestDeduplicator = new RequestDeduplicator();
+```
+
+### Request Batching
+```tsx
+// lib/api/request-batching.ts
+class RequestBatcher<T> {
+  private batch: Array<{
+    id: string;
+    resolve: (value: T) => void;
+    reject: (error: Error) => void;
+  }> = [];
+  private timeout: NodeJS.Timeout | null = null;
+  private batchSize: number;
+  private batchDelay: number;
+
+  constructor(batchSize: number = 10, batchDelay: number = 50) {
+    this.batchSize = batchSize;
+    this.batchDelay = batchDelay;
+  }
+
+  add(
+    id: string,
+    resolve: (value: T) => void,
+    reject: (error: Error) => void
+  ) {
+    this.batch.push({ id, resolve, reject });
+
+    // Process batch if it's full
+    if (this.batch.length >= this.batchSize) {
+      this.processBatch();
+    } else if (this.batch.length === 1) {
+      // Start timer for first item
+      this.timeout = setTimeout(() => this.processBatch(), this.batchDelay);
+    }
+  }
+
+  private async processBatch() {
+    if (this.timeout) {
+      clearTimeout(this.timeout);
+      this.timeout = null;
+    }
+
+    if (this.batch.length === 0) return;
+
+    const currentBatch = [...this.batch];
+    this.batch = [];
+
+    try {
+      // Process batch (implement based on your API)
+      const results = await this.processBatchRequest(currentBatch);
+      
+      // Resolve each promise with corresponding result
+      currentBatch.forEach(({ id, resolve, reject }) => {
+        const result = results.find(r => r.id === id);
+        if (result) {
+          resolve(result.data);
+        } else {
+          reject(new Error(`No result found for ${id}`));
+        }
+      });
+    } catch (error) {
+      // Reject all promises on error
+      currentBatch.forEach(({ reject }) => reject(error));
+    }
+  }
+
+  private async processBatchRequest(
+    batch: Array<{ id: string }>
+  ): Promise<Array<{ id: string; data: T }>> {
+    // Implement batch API call here
+    // This is just an example
+    const ids = batch.map(item => item.id);
+    const response = await fetch('/api/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Batch request failed');
+    }
+
+    return response.json();
+  }
+}
+
+// Usage example for user fetching
+export const userBatchFetcher = new RequestBatcher<User>();
+```
+
+## Error Boundaries & Fallback States
+
+### Error Boundary Component
+```tsx
+// components/ErrorBoundary.tsx
+import React, { Component, ErrorInfo, ReactNode } from 'react';
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+  onError?: (error: Error, errorInfo: ErrorInfo) => void;
+}
+
+interface State {
+  hasError: boolean;
+  error?: Error;
+}
+
+export class ErrorBoundary extends Component<Props, State> {
+  public state: State = {
+    hasError: false,
+  };
+
+  public static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('ErrorBoundary caught an error:', error, errorInfo);
+    this.props.onError?.(error, errorInfo);
+  }
+
+  public render() {
+    if (this.state.hasError) {
+      return (
+        this.props.fallback || (
+          <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+            <h2 className="text-lg font-semibold text-red-800">
+              Something went wrong
+            </h2>
+            <p className="text-red-600 mt-2">
+              {this.state.error?.message || 'An unexpected error occurred'}
+            </p>
+            <button
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+              onClick={() => this.setState({ hasError: false })}
+            >
+              Try again
+            </button>
+          </div>
+        )
+      );
+    }
+
+    return this.props.children;
+  }
+}
+```
+
+### Data Loading States
+```tsx
+// components/DataLoadingStates.tsx
+import { ReactNode } from 'react';
+
+interface LoadingStateProps {
+  isLoading: boolean;
+  error?: Error | null;
+  isEmpty?: boolean;
+  children: ReactNode;
+  loadingComponent?: ReactNode;
+  errorComponent?: ReactNode;
+  emptyComponent?: ReactNode;
+}
+
+export const DataLoadingState = ({
+  isLoading,
+  error,
+  isEmpty = false,
+  children,
+  loadingComponent,
+  errorComponent,
+  emptyComponent,
+}: LoadingStateProps) => {
+  if (isLoading) {
+    return (
+      loadingComponent || (
+        <div className="flex items-center justify-center p-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+          <span className="ml-3 text-gray-600">Loading...</span>
+        </div>
+      )
+    );
+  }
+
+  if (error) {
+    return (
+      errorComponent || (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+          <h3 className="text-lg font-semibold text-red-800">Error</h3>
+          <p className="text-red-600 mt-2">{error.message}</p>
+        </div>
+      )
+    );
+  }
+
+  if (isEmpty) {
+    return (
+      emptyComponent || (
+        <div className="p-8 text-center text-gray-500">
+          <p>No data found</p>
+        </div>
+      )
+    );
+  }
+
+  return <>{children}</>;
+};
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Use React Query for complex server state management
+- Implement optimistic updates for better UX
+- Set up background sync for data freshness
+- Use request deduplication to avoid duplicate API calls
+- Implement proper error boundaries and fallback states
+- Separate server state from client state
+- Use infinite queries for large datasets
+- Implement proper loading states
+
+### ❌ Don'ts
+- Don't mix server and client state
+- Don't forget to handle offline scenarios
+- Don't skip error boundaries
+- Don't make API calls without proper caching
+- Don't ignore request deduplication
+- Don't forget to clean up subscriptions and intervals
+
+### 🔧 Implementation Checklist
+- [ ] Set up React Query or SWR configuration
+- [ ] Create custom hooks for data fetching
+- [ ] Implement optimistic updates
+- [ ] Set up background sync
+- [ ] Add request deduplication
+- [ ] Create error boundaries
+- [ ] Implement proper loading states
+- [ ] Set up infinite queries for pagination
+- [ ] Test offline scenarios
+- [ ] Monitor performance and cache efficiency
+description:
+globs:
+alwaysApply: false
+---

@@ -1,0 +1,1127 @@
+# SEO & Meta Management Best Practices
+
+## SEO Strategy
+
+### Core Web Vitals & SEO Metrics
+```tsx
+// ✅ Good: Monitor and optimize for Core Web Vitals
+// - Largest Contentful Paint (LCP): < 2.5s
+// - First Input Delay (FID): < 100ms  
+// - Cumulative Layout Shift (CLS): < 0.1
+// - First Contentful Paint (FCP): < 1.8s
+// - Time to Interactive (TTI): < 3.8s
+
+// SEO Performance Targets
+// - Page load speed: < 3 seconds
+// - Mobile-first indexing compliance
+// - Core Web Vitals: Pass all thresholds
+// - Accessibility score: 90+ (Lighthouse)
+// - SEO score: 90+ (Lighthouse)
+```
+
+### SEO Audit Checklist
+```tsx
+// ✅ Good: Regular SEO audits
+export const SEO_AUDIT_CHECKLIST = {
+  technical: [
+    'Page load speed optimization',
+    'Mobile responsiveness',
+    'Core Web Vitals compliance',
+    'Structured data implementation',
+    'XML sitemap generation',
+    'Robots.txt configuration',
+    'Canonical URLs',
+    'Hreflang tags for i18n',
+  ],
+  content: [
+    'Meta title optimization (50-60 chars)',
+    'Meta description optimization (150-160 chars)',
+    'Heading structure (H1, H2, H3)',
+    'Image alt text optimization',
+    'Internal linking strategy',
+    'Content quality and relevance',
+    'Keyword optimization',
+  ],
+  userExperience: [
+    'Navigation structure',
+    'Breadcrumb implementation',
+    'Search functionality',
+    'Page layout and readability',
+    'Call-to-action placement',
+  ],
+} as const;
+```
+
+## Dynamic Meta Tags
+
+### Next.js Metadata API
+```tsx
+// app/layout.tsx
+import { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: {
+    template: '%s | Vanwyck',
+    default: 'Vanwyck - Build Amazing Applications',
+  },
+  description: 'Build amazing applications with our enterprise-grade platform. High performance, security, and scalability.',
+  keywords: ['web development', 'platform', 'enterprise', 'performance', 'security'],
+  authors: [{ name: 'Vanwyck Team' }],
+  creator: 'Vanwyck',
+  publisher: 'Vanwyck',
+  formatDetection: {
+    email: false,
+    address: false,
+    telephone: false,
+  },
+  metadataBase: new URL('https://vanwyck.com'),
+  alternates: {
+    canonical: '/',
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      'max-video-preview': -1,
+      'max-image-preview': 'large',
+      'max-snippet': -1,
+    },
+  },
+  verification: {
+    google: 'your-google-verification-code',
+    yandex: 'your-yandex-verification-code',
+    yahoo: 'your-yahoo-verification-code',
+  },
+};
+
+// app/[slug]/page.tsx
+export async function generateMetadata({ 
+  params 
+}: { 
+  params: { slug: string } 
+}): Promise<Metadata> {
+  // Fetch page data
+  const page = await getPageBySlug(params.slug);
+  
+  if (!page) {
+    return {
+      title: 'Page Not Found',
+      description: 'The requested page could not be found.',
+    };
+  }
+
+  return {
+    title: page.title,
+    description: page.excerpt || page.description,
+    keywords: page.keywords?.join(', '),
+    openGraph: {
+      title: page.title,
+      description: page.excerpt || page.description,
+      url: `https://vanwyck.com/${params.slug}`,
+      siteName: 'Vanwyck',
+      images: page.featuredImage ? [
+        {
+          url: page.featuredImage,
+          width: 1200,
+          height: 630,
+          alt: page.title,
+        }
+      ] : [],
+      locale: 'en_US',
+      type: 'article',
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: page.title,
+      description: page.excerpt || page.description,
+      images: page.featuredImage ? [page.featuredImage] : [],
+      creator: '@vanwyck',
+      site: '@vanwyck',
+    },
+    alternates: {
+      canonical: `https://vanwyck.com/${params.slug}`,
+    },
+  };
+}
+```
+
+### Dynamic Meta Tag Generation
+```tsx
+// lib/seo.ts
+import { Metadata } from 'next';
+
+interface SEOConfig {
+  title: string;
+  description: string;
+  keywords?: string[];
+  image?: string;
+  url: string;
+  type?: 'website' | 'article' | 'product';
+  publishedTime?: string;
+  modifiedTime?: string;
+  author?: string;
+  section?: string;
+  tags?: string[];
+}
+
+export function generateMetadata(config: SEOConfig): Metadata {
+  const {
+    title,
+    description,
+    keywords,
+    image,
+    url,
+    type = 'website',
+    publishedTime,
+    modifiedTime,
+    author,
+    section,
+    tags,
+  } = config;
+
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  const fullUrl = `${baseUrl}${url}`;
+  const imageUrl = image ? `${baseUrl}${image}` : undefined;
+
+  const metadata: Metadata = {
+    title: {
+      template: '%s | Vanwyck',
+      default: title,
+    },
+    description,
+    keywords: keywords?.join(', '),
+    openGraph: {
+      title,
+      description,
+      url: fullUrl,
+      siteName: 'Vanwyck',
+      locale: 'en_US',
+      type,
+      ...(imageUrl && {
+        images: [
+          {
+            url: imageUrl,
+            width: 1200,
+            height: 630,
+            alt: title,
+          },
+        ],
+      }),
+      ...(type === 'article' && {
+        publishedTime,
+        modifiedTime,
+        authors: author ? [author] : undefined,
+        section,
+        tags,
+      }),
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title,
+      description,
+      ...(imageUrl && { images: [imageUrl] }),
+      creator: '@vanwyck',
+      site: '@vanwyck',
+    },
+    alternates: {
+      canonical: fullUrl,
+    },
+  };
+
+  return metadata;
+}
+
+// Usage in components
+export function BlogPostPage({ post }: { post: BlogPost }) {
+  const metadata = generateMetadata({
+    title: post.title,
+    description: post.excerpt,
+    keywords: post.tags,
+    image: post.featuredImage,
+    url: `/blog/${post.slug}`,
+    type: 'article',
+    publishedTime: post.publishedAt,
+    modifiedTime: post.updatedAt,
+    author: post.author.name,
+    section: post.category,
+    tags: post.tags,
+  });
+
+  return (
+    <>
+      <Head>
+        <title>{metadata.title}</title>
+        <meta name="description" content={metadata.description} />
+        {/* Additional meta tags */}
+      </Head>
+      {/* Page content */}
+    </>
+  );
+}
+```
+
+## Open Graph & Social Media
+
+### Open Graph Implementation
+```tsx
+// components/OpenGraphTags.tsx
+interface OpenGraphProps {
+  title: string;
+  description: string;
+  url: string;
+  image?: string;
+  type?: 'website' | 'article' | 'product';
+  siteName?: string;
+  locale?: string;
+  publishedTime?: string;
+  modifiedTime?: string;
+  author?: string;
+  section?: string;
+  tags?: string[];
+}
+
+export function OpenGraphTags({
+  title,
+  description,
+  url,
+  image,
+  type = 'website',
+  siteName = 'Vanwyck',
+  locale = 'en_US',
+  publishedTime,
+  modifiedTime,
+  author,
+  section,
+  tags,
+}: OpenGraphProps) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  const fullUrl = `${baseUrl}${url}`;
+  const imageUrl = image ? `${baseUrl}${image}` : undefined;
+
+  return (
+    <>
+      {/* Basic Open Graph tags */}
+      <meta property="og:title" content={title} />
+      <meta property="og:description" content={description} />
+      <meta property="og:url" content={fullUrl} />
+      <meta property="og:type" content={type} />
+      <meta property="og:site_name" content={siteName} />
+      <meta property="og:locale" content={locale} />
+      
+      {/* Image tags */}
+      {imageUrl && (
+        <>
+          <meta property="og:image" content={imageUrl} />
+          <meta property="og:image:width" content="1200" />
+          <meta property="og:image:height" content="630" />
+          <meta property="og:image:alt" content={title} />
+        </>
+      )}
+      
+      {/* Article-specific tags */}
+      {type === 'article' && (
+        <>
+          {publishedTime && (
+            <meta property="article:published_time" content={publishedTime} />
+          )}
+          {modifiedTime && (
+            <meta property="article:modified_time" content={modifiedTime} />
+          )}
+          {author && (
+            <meta property="article:author" content={author} />
+          )}
+          {section && (
+            <meta property="article:section" content={section} />
+          )}
+          {tags?.map((tag) => (
+            <meta key={tag} property="article:tag" content={tag} />
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+
+// Enhanced Open Graph with video support
+export function VideoOpenGraphTags({
+  title,
+  description,
+  url,
+  videoUrl,
+  videoType = 'video/mp4',
+  videoWidth = 1280,
+  videoHeight = 720,
+  image,
+  duration,
+}: VideoOpenGraphProps) {
+  return (
+    <>
+      <OpenGraphTags
+        title={title}
+        description={description}
+        url={url}
+        image={image}
+        type="video"
+      />
+      
+      {/* Video-specific Open Graph tags */}
+      <meta property="og:video" content={videoUrl} />
+      <meta property="og:video:type" content={videoType} />
+      <meta property="og:video:width" content={videoWidth.toString()} />
+      <meta property="og:video:height" content={videoHeight.toString()} />
+      {duration && (
+        <meta property="og:video:duration" content={duration.toString()} />
+      )}
+    </>
+  );
+}
+```
+
+### Twitter Card Implementation
+```tsx
+// components/TwitterCard.tsx
+interface TwitterCardProps {
+  title: string;
+  description: string;
+  image?: string;
+  creator?: string;
+  site?: string;
+  cardType?: 'summary' | 'summary_large_image' | 'app' | 'player';
+}
+
+export function TwitterCard({
+  title,
+  description,
+  image,
+  creator = '@vanwyck',
+  site = '@vanwyck',
+  cardType = 'summary_large_image',
+}: TwitterCardProps) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  const imageUrl = image ? `${baseUrl}${image}` : undefined;
+
+  return (
+    <>
+      <meta name="twitter:card" content={cardType} />
+      <meta name="twitter:site" content={site} />
+      <meta name="twitter:creator" content={creator} />
+      <meta name="twitter:title" content={title} />
+      <meta name="twitter:description" content={description} />
+      {imageUrl && <meta name="twitter:image" content={imageUrl} />}
+    </>
+  );
+}
+
+// App-specific Twitter Card
+export function TwitterAppCard({
+  title,
+  description,
+  image,
+  appName,
+  appCountry,
+  appId,
+}: TwitterAppCardProps) {
+  return (
+    <>
+      <TwitterCard
+        title={title}
+        description={description}
+        image={image}
+        cardType="app"
+      />
+      <meta name="twitter:app:name:iphone" content={appName} />
+      <meta name="twitter:app:id:iphone" content={appId.iphone} />
+      <meta name="twitter:app:name:ipad" content={appName} />
+      <meta name="twitter:app:id:ipad" content={appId.ipad} />
+      <meta name="twitter:app:name:googleplay" content={appName} />
+      <meta name="twitter:app:id:googleplay" content={appId.android} />
+      <meta name="twitter:app:country" content={appCountry} />
+    </>
+  );
+}
+```
+
+## Structured Data (JSON-LD)
+
+### Basic Structured Data
+```tsx
+// components/StructuredData.tsx
+interface StructuredDataProps {
+  type: 'Organization' | 'WebSite' | 'Article' | 'Product' | 'BreadcrumbList';
+  data: any;
+}
+
+export function StructuredData({ type, data }: StructuredDataProps) {
+  const structuredData = {
+    '@context': 'https://schema.org',
+    '@type': type,
+    ...data,
+  };
+
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{
+        __html: JSON.stringify(structuredData),
+      }}
+    />
+  );
+}
+
+// Organization schema
+export function OrganizationSchema() {
+  return (
+    <StructuredData
+      type="Organization"
+      data={{
+        name: 'Vanwyck',
+        url: 'https://vanwyck.com',
+        logo: 'https://vanwyck.com/logo.png',
+        description: 'Build amazing applications with our enterprise-grade platform',
+        address: {
+          '@type': 'PostalAddress',
+          streetAddress: '123 Innovation Street',
+          addressLocality: 'Tech City',
+          addressRegion: 'CA',
+          postalCode: '94105',
+          addressCountry: 'US',
+        },
+        contactPoint: {
+          '@type': 'ContactPoint',
+          telephone: '+1-555-0123',
+          contactType: 'customer service',
+          email: 'hello@vanwyck.com',
+        },
+        sameAs: [
+          'https://twitter.com/vanwyck',
+          'https://linkedin.com/company/vanwyck',
+          'https://github.com/vanwyck',
+        ],
+      }}
+    />
+  );
+}
+
+// Website schema
+export function WebsiteSchema() {
+  return (
+    <StructuredData
+      type="WebSite"
+      data={{
+        name: 'Vanwyck',
+        url: 'https://vanwyck.com',
+        description: 'Build amazing applications with our enterprise-grade platform',
+        potentialAction: {
+          '@type': 'SearchAction',
+          target: {
+            '@type': 'EntryPoint',
+            urlTemplate: 'https://vanwyck.com/search?q={search_term_string}',
+          },
+          'query-input': 'required name=search_term_string',
+        },
+      }}
+    />
+  );
+}
+```
+
+### Article & Blog Post Schema
+```tsx
+// components/ArticleSchema.tsx
+interface ArticleSchemaProps {
+  title: string;
+  description: string;
+  url: string;
+  image: string;
+  publishedTime: string;
+  modifiedTime?: string;
+  author: {
+    name: string;
+    url?: string;
+  };
+  publisher: {
+    name: string;
+    logo: string;
+  };
+  category?: string;
+  tags?: string[];
+  wordCount?: number;
+  readingTime?: number;
+}
+
+export function ArticleSchema({
+  title,
+  description,
+  url,
+  image,
+  publishedTime,
+  modifiedTime,
+  author,
+  publisher,
+  category,
+  tags,
+  wordCount,
+  readingTime,
+}: ArticleSchemaProps) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  
+  return (
+    <StructuredData
+      type="Article"
+      data={{
+        headline: title,
+        description,
+        image: `${baseUrl}${image}`,
+        url: `${baseUrl}${url}`,
+        datePublished: publishedTime,
+        ...(modifiedTime && { dateModified: modifiedTime }),
+        author: {
+          '@type': 'Person',
+          name: author.name,
+          ...(author.url && { url: author.url }),
+        },
+        publisher: {
+          '@type': 'Organization',
+          name: publisher.name,
+          logo: {
+            '@type': 'ImageObject',
+            url: `${baseUrl}${publisher.logo}`,
+          },
+        },
+        mainEntityOfPage: {
+          '@type': 'WebPage',
+          '@id': `${baseUrl}${url}`,
+        },
+        ...(category && { articleSection: category }),
+        ...(tags && { keywords: tags.join(', ') }),
+        ...(wordCount && { wordCount }),
+        ...(readingTime && { timeRequired: `PT${readingTime}M` }),
+      }}
+    />
+  );
+}
+
+// Breadcrumb schema
+export function BreadcrumbSchema({ items }: { items: Array<{ name: string; url: string }> }) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  
+  return (
+    <StructuredData
+      type="BreadcrumbList"
+      data={{
+        itemListElement: items.map((item, index) => ({
+          '@type': 'ListItem',
+          position: index + 1,
+          name: item.name,
+          item: `${baseUrl}${item.url}`,
+        })),
+      }}
+    />
+  );
+}
+```
+
+## Sitemap Generation
+
+### Dynamic Sitemap Generation
+```tsx
+// app/sitemap.ts
+import { MetadataRoute } from 'next';
+
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  
+  // Static pages
+  const staticPages = [
+    {
+      url: baseUrl,
+      lastModified: new Date(),
+      changeFrequency: 'daily' as const,
+      priority: 1,
+    },
+    {
+      url: `${baseUrl}/about`,
+      lastModified: new Date(),
+      changeFrequency: 'monthly' as const,
+      priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/contact`,
+      lastModified: new Date(),
+      changeFrequency: 'monthly' as const,
+      priority: 0.8,
+    },
+    {
+      url: `${baseUrl}/blog`,
+      lastModified: new Date(),
+      changeFrequency: 'daily' as const,
+      priority: 0.9,
+    },
+  ];
+
+  // Dynamic blog posts
+  const blogPosts = await getBlogPosts();
+  const blogSitemap = blogPosts.map((post) => ({
+    url: `${baseUrl}/blog/${post.slug}`,
+    lastModified: new Date(post.updatedAt),
+    changeFrequency: 'weekly' as const,
+    priority: 0.7,
+  }));
+
+  // Dynamic product pages
+  const products = await getProducts();
+  const productSitemap = products.map((product) => ({
+    url: `${baseUrl}/products/${product.slug}`,
+    lastModified: new Date(product.updatedAt),
+    changeFrequency: 'weekly' as const,
+    priority: 0.8,
+  }));
+
+  return [...staticPages, ...blogSitemap, ...productSitemap];
+}
+
+// app/robots.txt
+export default function robots(): MetadataRoute.Robots {
+  return {
+    rules: [
+      {
+        userAgent: '*',
+        allow: '/',
+        disallow: [
+          '/api/',
+          '/admin/',
+          '/private/',
+          '/_next/',
+          '/static/',
+        ],
+      },
+      {
+        userAgent: 'Googlebot',
+        allow: '/',
+        disallow: ['/admin/'],
+      },
+    ],
+    sitemap: `${process.env.NEXT_PUBLIC_BASE_URL}/sitemap.xml`,
+    host: process.env.NEXT_PUBLIC_BASE_URL,
+  };
+}
+```
+
+### Advanced Sitemap with Categories
+```tsx
+// lib/sitemap.ts
+interface SitemapItem {
+  url: string;
+  lastModified: Date;
+  changeFrequency: 'always' | 'hourly' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'never';
+  priority: number;
+}
+
+export async function generateAdvancedSitemap(): Promise<SitemapItem[]> {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  const sitemap: SitemapItem[] = [];
+
+  // Add static pages
+  sitemap.push(
+    {
+      url: baseUrl,
+      lastModified: new Date(),
+      changeFrequency: 'daily',
+      priority: 1,
+    },
+    {
+      url: `${baseUrl}/sitemap`,
+      lastModified: new Date(),
+      changeFrequency: 'weekly',
+      priority: 0.5,
+    }
+  );
+
+  // Add category pages
+  const categories = await getCategories();
+  categories.forEach((category) => {
+    sitemap.push({
+      url: `${baseUrl}/category/${category.slug}`,
+      lastModified: new Date(category.updatedAt),
+      changeFrequency: 'weekly',
+      priority: 0.8,
+    });
+  });
+
+  // Add tag pages
+  const tags = await getTags();
+  tags.forEach((tag) => {
+    sitemap.push({
+      url: `${baseUrl}/tag/${tag.slug}`,
+      lastModified: new Date(tag.updatedAt),
+      changeFrequency: 'monthly',
+      priority: 0.6,
+    });
+  });
+
+  // Add author pages
+  const authors = await getAuthors();
+  authors.forEach((author) => {
+    sitemap.push({
+      url: `${baseUrl}/author/${author.slug}`,
+      lastModified: new Date(author.updatedAt),
+      changeFrequency: 'monthly',
+      priority: 0.7,
+    });
+  });
+
+  return sitemap;
+}
+
+// Generate sitemap index for large sites
+export async function generateSitemapIndex(): Promise<string> {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  
+  const sitemaps = [
+    {
+      url: `${baseUrl}/sitemap-main.xml`,
+      lastModified: new Date(),
+    },
+    {
+      url: `${baseUrl}/sitemap-blog.xml`,
+      lastModified: new Date(),
+    },
+    {
+      url: `${baseUrl}/sitemap-products.xml`,
+      lastModified: new Date(),
+    },
+  ];
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  ${sitemaps.map(sitemap => `
+  <sitemap>
+    <loc>${sitemap.url}</loc>
+    <lastmod>${sitemap.lastModified.toISOString()}</lastmod>
+  </sitemap>
+  `).join('')}
+</sitemapindex>`;
+}
+```
+
+## SEO Optimization Patterns
+
+### SEO Component Patterns
+```tsx
+// components/SEOHead.tsx
+interface SEOHeadProps {
+  title: string;
+  description: string;
+  keywords?: string[];
+  image?: string;
+  url: string;
+  type?: 'website' | 'article' | 'product';
+  publishedTime?: string;
+  modifiedTime?: string;
+  author?: string;
+  section?: string;
+  tags?: string[];
+  noindex?: boolean;
+  nofollow?: boolean;
+}
+
+export function SEOHead({
+  title,
+  description,
+  keywords,
+  image,
+  url,
+  type = 'website',
+  publishedTime,
+  modifiedTime,
+  author,
+  section,
+  tags,
+  noindex = false,
+  nofollow = false,
+}: SEOHeadProps) {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vanwyck.com';
+  const fullUrl = `${baseUrl}${url}`;
+  const imageUrl = image ? `${baseUrl}${image}` : undefined;
+
+  return (
+    <Head>
+      {/* Basic meta tags */}
+      <title>{title}</title>
+      <meta name="description" content={description} />
+      {keywords && <meta name="keywords" content={keywords.join(', ')} />}
+      
+      {/* Canonical URL */}
+      <link rel="canonical" href={fullUrl} />
+      
+      {/* Robots meta */}
+      <meta 
+        name="robots" 
+        content={`${noindex ? 'noindex' : 'index'}, ${nofollow ? 'nofollow' : 'follow'}`} 
+      />
+      
+      {/* Open Graph */}
+      <OpenGraphTags
+        title={title}
+        description={description}
+        url={url}
+        image={image}
+        type={type}
+        publishedTime={publishedTime}
+        modifiedTime={modifiedTime}
+        author={author}
+        section={section}
+        tags={tags}
+      />
+      
+      {/* Twitter Card */}
+      <TwitterCard
+        title={title}
+        description={description}
+        image={image}
+      />
+      
+      {/* Structured Data */}
+      {type === 'article' && publishedTime && (
+        <ArticleSchema
+          title={title}
+          description={description}
+          url={url}
+          image={image || '/default-og-image.jpg'}
+          publishedTime={publishedTime}
+          modifiedTime={modifiedTime}
+          author={{ name: author || 'Vanwyck Team' }}
+          publisher={{ name: 'Vanwyck', logo: '/logo.png' }}
+          category={section}
+          tags={tags}
+        />
+      )}
+    </Head>
+  );
+}
+
+// SEO-optimized page wrapper
+export function SEOPageWrapper({
+  children,
+  seoProps,
+}: {
+  children: React.ReactNode;
+  seoProps: SEOHeadProps;
+}) {
+  return (
+    <>
+      <SEOHead {...seoProps} />
+      {children}
+    </>
+  );
+}
+```
+
+### Performance & SEO Optimization
+```tsx
+// components/SEOOptimizedImage.tsx
+import Image from 'next/image';
+
+interface SEOOptimizedImageProps {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+  priority?: boolean;
+  className?: string;
+  sizes?: string;
+}
+
+export function SEOOptimizedImage({
+  src,
+  alt,
+  width,
+  height,
+  priority = false,
+  className,
+  sizes = '(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw',
+}: SEOOptimizedImageProps) {
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      width={width}
+      height={height}
+      priority={priority}
+      className={className}
+      sizes={sizes}
+      placeholder="blur"
+      blurDataURL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k="
+    />
+  );
+}
+
+// SEO-optimized link component
+export function SEOOptimizedLink({
+  href,
+  children,
+  className,
+  ...props
+}: LinkProps) {
+  const isExternal = href.startsWith('http');
+  
+  return (
+    <Link
+      href={href}
+      className={className}
+      {...(isExternal && {
+        rel: 'noopener noreferrer',
+        target: '_blank',
+      })}
+      {...props}
+    >
+      {children}
+    </Link>
+  );
+}
+```
+
+## Testing & Validation
+
+### SEO Testing Setup
+```tsx
+// test/setup/seo.ts
+import { render } from '@testing-library/react';
+import { axe, toHaveNoViolations } from 'jest-axe';
+
+expect.extend(toHaveNoViolations);
+
+export const SEOTest = async (container: HTMLElement) => {
+  // Accessibility testing
+  const accessibilityResults = await axe(container);
+  expect(accessibilityResults).toHaveNoViolations();
+  
+  // SEO structure testing
+  const headings = container.querySelectorAll('h1, h2, h3, h4, h5, h6');
+  const headingLevels = Array.from(headings).map(h => parseInt(h.tagName[1]));
+  
+  // Check for proper heading hierarchy
+  for (let i = 1; i < headingLevels.length; i++) {
+    expect(headingLevels[i] - headingLevels[i - 1]).toBeLessThanOrEqual(1);
+  }
+  
+  // Check for single H1
+  const h1Elements = container.querySelectorAll('h1');
+  expect(h1Elements).toHaveLength(1);
+  
+  // Check for meta description
+  const metaDescription = container.querySelector('meta[name="description"]');
+  expect(metaDescription).toBeInTheDocument();
+  
+  // Check for canonical URL
+  const canonicalLink = container.querySelector('link[rel="canonical"]');
+  expect(canonicalLink).toBeInTheDocument();
+};
+
+// Test utilities
+export const renderWithSEO = (ui: React.ReactElement) => {
+  const utils = render(ui);
+  
+  // Additional SEO checks
+  const title = utils.container.querySelector('title');
+  expect(title).toBeInTheDocument();
+  
+  return utils;
+};
+```
+
+### SEO Component Tests
+```tsx
+// test/components/SEOHead.test.tsx
+import { render } from '@testing-library/react';
+import { SEOHead } from '../SEOHead';
+
+describe('SEOHead', () => {
+  it('should render basic SEO meta tags', () => {
+    const { container } = render(
+      <SEOHead
+        title="Test Page"
+        description="Test description"
+        url="/test"
+      />
+    );
+    
+    expect(container.querySelector('title')).toHaveTextContent('Test Page');
+    expect(container.querySelector('meta[name="description"]')).toHaveAttribute('content', 'Test description');
+    expect(container.querySelector('link[rel="canonical"]')).toHaveAttribute('href', expect.stringContaining('/test'));
+  });
+
+  it('should render Open Graph tags', () => {
+    const { container } = render(
+      <SEOHead
+        title="Test Page"
+        description="Test description"
+        url="/test"
+        image="/test-image.jpg"
+      />
+    );
+    
+    expect(container.querySelector('meta[property="og:title"]')).toHaveAttribute('content', 'Test Page');
+    expect(container.querySelector('meta[property="og:description"]')).toHaveAttribute('content', 'Test description');
+    expect(container.querySelector('meta[property="og:image"]')).toHaveAttribute('content', expect.stringContaining('/test-image.jpg'));
+  });
+
+  it('should handle noindex/nofollow', () => {
+    const { container } = render(
+      <SEOHead
+        title="Test Page"
+        description="Test description"
+        url="/test"
+        noindex
+        nofollow
+      />
+    );
+    
+    expect(container.querySelector('meta[name="robots"]')).toHaveAttribute('content', 'noindex, nofollow');
+  });
+});
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Use Next.js Metadata API for dynamic meta tags
+- Implement proper Open Graph and Twitter Card tags
+- Add structured data (JSON-LD) for rich snippets
+- Generate XML sitemaps for all content
+- Configure robots.txt properly
+- Use canonical URLs to prevent duplicate content
+- Optimize images with proper alt text and sizing
+- Implement proper heading hierarchy (H1, H2, H3)
+- Monitor Core Web Vitals and SEO performance
+- Test accessibility and SEO compliance
+
+### ❌ Don'ts
+- Don't duplicate meta tags across pages
+- Don't forget to add alt text to images
+- Don't use generic or duplicate titles
+- Don't ignore mobile-first indexing
+- Don't forget to test with search console
+- Don't use JavaScript for critical content
+- Don't ignore page load speed optimization
+- Don't forget to implement hreflang for i18n
+
+### 🎯 Implementation Checklist
+- [ ] Set up Next.js Metadata API
+- [ ] Implement Open Graph and Twitter Card tags
+- [ ] Add structured data for all content types
+- [ ] Generate XML sitemaps
+- [ ] Configure robots.txt
+- [ ] Implement canonical URLs
+- [ ] Optimize images and add alt text
+- [ ] Set up proper heading structure
+- [ ] Monitor Core Web Vitals
+- [ ] Test accessibility and SEO compliance
+- [ ] Set up Google Search Console
+- [ ] Implement hreflang for international sites
+description:
+globs:
+alwaysApply: false
+---

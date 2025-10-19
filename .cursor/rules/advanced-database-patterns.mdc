@@ -1,0 +1,1211 @@
+# Advanced Database Patterns & Scaling Strategies
+
+## Database Scaling Strategy
+
+### Core Principles
+```tsx
+// ✅ Good: Database scaling principles
+// - Use transactions for data consistency
+// - Implement connection pooling for performance
+// - Use read replicas for read-heavy workloads
+// - Implement database sharding for horizontal scaling
+// - Set up proper backup and recovery procedures
+// - Monitor database performance and health
+```
+
+### Scaling Architecture
+```tsx
+// ✅ Good: Multi-tier database architecture
+type DatabaseArchitecture = {
+  primary: 'single' | 'master-slave' | 'multi-master';
+  replicas: 'none' | 'read-only' | 'read-write';
+  sharding: 'none' | 'horizontal' | 'vertical';
+  caching: 'none' | 'redis' | 'memcached' | 'application';
+  backup: 'manual' | 'automated' | 'continuous';
+};
+```
+
+## Database Transactions
+
+### Transaction Management
+```tsx
+// lib/db/transactions.ts
+import { prisma } from '@/lib/db';
+import { PrismaClient } from '@prisma/client';
+
+export class TransactionManager {
+  // Execute function within transaction
+  static async executeInTransaction<T>(
+    fn: (tx: Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use'>) => Promise<T>
+  ): Promise<T> {
+    return prisma.$transaction(fn, {
+      maxWait: 5000, // 5 seconds max wait
+      timeout: 10000, // 10 seconds timeout
+      isolationLevel: 'ReadCommitted', // Default isolation level
+    });
+  }
+
+  // Execute with custom isolation level
+  static async executeWithIsolation<T>(
+    fn: (tx: Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use'>) => Promise<T>,
+    isolationLevel: 'ReadUncommitted' | 'ReadCommitted' | 'RepeatableRead' | 'Serializable'
+  ): Promise<T> {
+    return prisma.$transaction(fn, {
+      maxWait: 5000,
+      timeout: 10000,
+      isolationLevel,
+    });
+  }
+
+  // Execute with retry logic
+  static async executeWithRetry<T>(
+    fn: (tx: Omit<PrismaClient, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use'>) => Promise<T>,
+    maxRetries: number = 3,
+    backoffMs: number = 1000
+  ): Promise<T> {
+    let lastError: Error;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.executeInTransaction(fn);
+      } catch (error: any) {
+        lastError = error;
+
+        // Don't retry on certain errors
+        if (this.isNonRetryableError(error)) {
+          throw error;
+        }
+
+        // Wait before retry (exponential backoff)
+        if (attempt < maxRetries) {
+          const delay = backoffMs * Math.pow(2, attempt - 1);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw lastError!;
+  }
+
+  // Check if error is non-retryable
+  private static isNonRetryableError(error: any): boolean {
+    // Constraint violations, validation errors, etc.
+    const nonRetryableCodes = [
+      'P2002', // Unique constraint violation
+      'P2003', // Foreign key constraint violation
+      'P2011', // Null constraint violation
+      'P2012', // Missing required value
+      'P2013', // Missing required argument
+      'P2014', // The change you are trying to make would violate the required relation
+      'P2015', // A related record could not be found
+      'P2016', // Query interpretation error
+      'P2017', // The records for relation are not connected
+      'P2018', // The connected records do not satisfy the requirements
+      'P2019', // Input error
+      'P2020', // Value out of range
+      'P2021', // The table does not exist in the current database
+      'P2022', // The column does not exist in the current database
+      'P2023', // Inconsistent column data
+      'P2024', // Connection pool timeout
+      'P2025', // Record not found
+      'P2026', // Current database provider does not support the feature
+      'P2027', // Multiple errors occurred on the database during query execution
+    ];
+
+    return nonRetryableCodes.includes(error.code);
+  }
+}
+
+// Example usage
+export const createUserWithProfile = async (userData: any, profileData: any) => {
+  return TransactionManager.executeInTransaction(async (tx) => {
+    // Create user
+    const user = await tx.user.create({
+      data: userData,
+    });
+
+    // Create profile
+    const profile = await tx.userProfile.create({
+      data: {
+        ...profileData,
+        userId: user.id,
+      },
+    });
+
+    // Create default preferences
+    const preferences = await tx.userPreferences.create({
+      data: {
+        userId: user.id,
+        language: 'en',
+        theme: 'light',
+        notifications: {
+          email: true,
+          push: false,
+          sms: false,
+        },
+      },
+    });
+
+    return { user, profile, preferences };
+  });
+};
+
+// Complex transaction with rollback on error
+export const transferFunds = async (
+  fromAccountId: string,
+  toAccountId: string,
+  amount: number
+) => {
+  return TransactionManager.executeWithRetry(async (tx) => {
+    // Check if accounts exist and have sufficient funds
+    const fromAccount = await tx.account.findUnique({
+      where: { id: fromAccountId },
+      select: { balance: true, currency: true },
+    });
+
+    const toAccount = await tx.account.findUnique({
+      where: { id: toAccountId },
+      select: { balance: true, currency: true },
+    });
+
+    if (!fromAccount || !toAccount) {
+      throw new Error('One or both accounts not found');
+    }
+
+    if (fromAccount.currency !== toAccount.currency) {
+      throw new Error('Cannot transfer between different currencies');
+    }
+
+    if (fromAccount.balance < amount) {
+      throw new Error('Insufficient funds');
+    }
+
+    // Perform transfer
+    const [updatedFromAccount, updatedToAccount] = await Promise.all([
+      tx.account.update({
+        where: { id: fromAccountId },
+        data: { balance: { decrement: amount } },
+      }),
+      tx.account.update({
+        where: { id: toAccountId },
+        data: { balance: { increment: amount } },
+      }),
+    ]);
+
+    // Record transaction
+    const transaction = await tx.transaction.create({
+      data: {
+        fromAccountId,
+        toAccountId,
+        amount,
+        currency: fromAccount.currency,
+        status: 'completed',
+        type: 'transfer',
+      },
+    });
+
+    return { transaction, fromAccount: updatedFromAccount, toAccount: updatedToAccount };
+  });
+};
+```
+
+### Transaction Decorators
+```tsx
+// lib/db/transaction-decorators.ts
+import { TransactionManager } from './transactions';
+
+// Decorator for automatic transaction management
+export function WithTransaction(isolationLevel?: 'ReadUncommitted' | 'ReadCommitted' | 'RepeatableRead' | 'Serializable') {
+  return function (target: any, propertyName: string, descriptor: PropertyDescriptor) {
+    const method = descriptor.value;
+
+    descriptor.value = async function (...args: any[]) {
+      if (isolationLevel) {
+        return TransactionManager.executeWithIsolation(
+          (tx) => method.apply(this, [tx, ...args]),
+          isolationLevel
+        );
+      } else {
+        return TransactionManager.executeInTransaction(
+          (tx) => method.apply(this, [tx, ...args])
+        );
+      }
+    };
+
+    return descriptor;
+  };
+}
+
+// Example usage
+export class UserService {
+  @WithTransaction('ReadCommitted')
+  async createUserWithProfile(tx: any, userData: any, profileData: any) {
+    const user = await tx.user.create({ data: userData });
+    const profile = await tx.userProfile.create({
+      data: { ...profileData, userId: user.id }
+    });
+    return { user, profile };
+  }
+
+  @WithTransaction('Serializable')
+  async updateUserBalance(tx: any, userId: string, amount: number) {
+    const user = await tx.user.findUnique({ where: { id: userId } });
+    if (!user) throw new Error('User not found');
+    
+    return tx.user.update({
+      where: { id: userId },
+      data: { balance: { increment: amount } }
+    });
+  }
+}
+```
+
+## Connection Pooling
+
+### Connection Pool Configuration
+```tsx
+// lib/db/connection-pool.ts
+import { Pool, PoolClient } from 'pg';
+import { PrismaClient } from '@prisma/client';
+
+export class ConnectionPoolManager {
+  private static pool: Pool;
+  private static prisma: PrismaClient;
+
+  // Initialize connection pool
+  static initialize() {
+    // PostgreSQL connection pool
+    this.pool = new Pool({
+      host: process.env.DB_HOST,
+      port: parseInt(process.env.DB_PORT || '5432'),
+      database: process.env.DB_NAME,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+      
+      // Pool configuration
+      max: parseInt(process.env.DB_POOL_MAX || '20'), // Maximum number of clients
+      min: parseInt(process.env.DB_POOL_MIN || '5'),  // Minimum number of clients
+      idle: parseInt(process.env.DB_POOL_IDLE || '10000'), // Close idle clients after 10 seconds
+      acquire: parseInt(process.env.DB_POOL_ACQUIRE || '30000'), // Acquire connection timeout
+      evict: parseInt(process.env.DB_POOL_EVICT || '60000'), // Run eviction every 60 seconds
+      
+      // Connection configuration
+      connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '10000'),
+      query_timeout: parseInt(process.env.DB_QUERY_TIMEOUT || '30000'),
+      statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '30000'),
+    });
+
+    // Prisma client with connection pool
+    this.prisma = new PrismaClient({
+      datasources: {
+        db: {
+          url: process.env.DATABASE_URL,
+        },
+      },
+      // Connection pool settings
+      log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+    });
+
+    // Setup pool event handlers
+    this.setupPoolEventHandlers();
+  }
+
+  // Get Prisma client
+  static getPrisma(): PrismaClient {
+    return this.prisma;
+  }
+
+  // Get raw PostgreSQL connection
+  static async getConnection(): Promise<PoolClient> {
+    return this.pool.connect();
+  }
+
+  // Execute query with connection from pool
+  static async executeQuery<T>(queryFn: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.getConnection();
+    
+    try {
+      return await queryFn(client);
+    } finally {
+      client.release();
+    }
+  }
+
+  // Execute transaction with connection from pool
+  static async executeTransaction<T>(queryFn: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.getConnection();
+    
+    try {
+      await client.query('BEGIN');
+      const result = await queryFn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Health check
+  static async healthCheck(): Promise<{
+    pool: { total: number; idle: number; waiting: number };
+    database: boolean;
+  }> {
+    const poolStats = {
+      total: this.pool.totalCount,
+      idle: this.pool.idleCount,
+      waiting: this.pool.waitingCount,
+    };
+
+    let databaseHealthy = false;
+    try {
+      await this.pool.query('SELECT 1');
+      databaseHealthy = true;
+    } catch (error) {
+      console.error('Database health check failed:', error);
+    }
+
+    return {
+      pool: poolStats,
+      database: databaseHealthy,
+    };
+  }
+
+  // Graceful shutdown
+  static async shutdown(): Promise<void> {
+    await this.pool.end();
+    await this.prisma.$disconnect();
+  }
+
+  private static setupPoolEventHandlers() {
+    this.pool.on('connect', (client) => {
+      console.log('New client connected to database');
+    });
+
+    this.pool.on('acquire', (client) => {
+      console.log('Client acquired from pool');
+    });
+
+    this.pool.on('release', (client) => {
+      console.log('Client released back to pool');
+    });
+
+    this.pool.on('error', (err, client) => {
+      console.error('Unexpected error on idle client', err);
+    });
+  }
+}
+
+// Initialize on module load
+ConnectionPoolManager.initialize();
+
+// Graceful shutdown on process termination
+process.on('SIGINT', async () => {
+  console.log('Shutting down connection pool...');
+  await ConnectionPoolManager.shutdown();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Shutting down connection pool...');
+  await ConnectionPoolManager.shutdown();
+  process.exit(0);
+});
+```
+
+## Read Replicas
+
+### Read Replica Configuration
+```tsx
+// lib/db/read-replicas.ts
+import { PrismaClient } from '@prisma/client';
+
+export class ReadReplicaManager {
+  private static primaryClient: PrismaClient;
+  private static replicaClients: PrismaClient[] = [];
+  private static currentReplicaIndex = 0;
+
+  // Initialize read replicas
+  static initialize() {
+    // Primary database (write operations)
+    this.primaryClient = new PrismaClient({
+      datasources: {
+        db: {
+          url: process.env.DATABASE_URL,
+        },
+      },
+    });
+
+    // Read replicas
+    const replicaUrls = process.env.DATABASE_REPLICA_URLS?.split(',') || [];
+    
+    this.replicaClients = replicaUrls.map(url => 
+      new PrismaClient({
+        datasources: {
+          db: { url: url.trim() },
+        },
+      })
+    );
+
+    console.log(`Initialized ${this.replicaClients.length} read replicas`);
+  }
+
+  // Get primary client for write operations
+  static getPrimaryClient(): PrismaClient {
+    return this.primaryClient;
+  }
+
+  // Get next read replica (round-robin)
+  static getReadReplica(): PrismaClient {
+    if (this.replicaClients.length === 0) {
+      return this.primaryClient; // Fallback to primary
+    }
+
+    const client = this.replicaClients[this.currentReplicaIndex];
+    this.currentReplicaIndex = (this.currentReplicaIndex + 1) % this.replicaClients.length;
+    
+    return client;
+  }
+
+  // Get specific read replica by index
+  static getReadReplicaByIndex(index: number): PrismaClient {
+    if (index >= 0 && index < this.replicaClients.length) {
+      return this.replicaClients[index];
+    }
+    return this.primaryClient; // Fallback to primary
+  }
+
+  // Health check for all replicas
+  static async healthCheck(): Promise<{
+    primary: boolean;
+    replicas: Array<{ index: number; healthy: boolean; lag?: number }>;
+  }> {
+    const primaryHealthy = await this.checkClientHealth(this.primaryClient);
+    
+    const replicaHealth = await Promise.all(
+      this.replicaClients.map(async (client, index) => {
+        const healthy = await this.checkClientHealth(client);
+        const lag = healthy ? await this.checkReplicationLag(client) : undefined;
+        
+        return { index, healthy, lag };
+      })
+    );
+
+    return {
+      primary: primaryHealthy,
+      replicas: replicaHealth,
+    };
+  }
+
+  // Check if client is healthy
+  private static async checkClientHealth(client: PrismaClient): Promise<boolean> {
+    try {
+      await client.$queryRaw`SELECT 1`;
+      return true;
+    } catch (error) {
+      console.error('Client health check failed:', error);
+      return false;
+    }
+  }
+
+  // Check replication lag
+  private static async checkReplicationLag(client: PrismaClient): Promise<number | undefined> {
+    try {
+      // This query depends on your PostgreSQL setup
+      // You might need to adjust based on your replication configuration
+      const result = await client.$queryRaw<[{ lag: string }]>`
+        SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp())) AS lag
+      `;
+      
+      return result[0]?.lag ? parseFloat(result[0].lag) : undefined;
+    } catch (error) {
+      console.error('Failed to check replication lag:', error);
+      return undefined;
+    }
+  }
+
+  // Graceful shutdown
+  static async shutdown(): Promise<void> {
+    await this.primaryClient.$disconnect();
+    await Promise.all(this.replicaClients.map(client => client.$disconnect()));
+  }
+}
+
+// Initialize on module load
+ReadReplicaManager.initialize();
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  await ReadReplicaManager.shutdown();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  await ReadReplicaManager.shutdown();
+  process.exit(0);
+});
+```
+
+### Read Replica Usage
+```tsx
+// lib/db/replica-aware-queries.ts
+import { ReadReplicaManager } from './read-replicas';
+
+export class ReplicaAwareQueries {
+  // Read operations using replicas
+  static async getUsers(filters: any = {}) {
+    const replica = ReadReplicaManager.getReadReplica();
+    
+    return replica.user.findMany({
+      where: filters,
+      include: {
+        profile: true,
+        preferences: true,
+      },
+    });
+  }
+
+  // Read operations with specific replica
+  static async getUsersFromReplica(replicaIndex: number, filters: any = {}) {
+    const replica = ReadReplicaManager.getReadReplicaByIndex(replicaIndex);
+    
+    return replica.user.findMany({
+      where: filters,
+      include: {
+        profile: true,
+        preferences: true,
+      },
+    });
+  }
+
+  // Write operations using primary
+  static async createUser(userData: any) {
+    const primary = ReadReplicaManager.getPrimaryClient();
+    
+    return primary.user.create({
+      data: userData,
+    });
+  }
+
+  // Mixed read/write operations
+  static async updateUserWithValidation(userId: string, updates: any) {
+    const primary = ReadReplicaManager.getPrimaryClient();
+    const replica = ReadReplicaManager.getReadReplica();
+    
+    // Read from replica for validation
+    const existingUser = await replica.user.findUnique({
+      where: { id: userId },
+      include: { profile: true },
+    });
+
+    if (!existingUser) {
+      throw new Error('User not found');
+    }
+
+    // Validate updates
+    if (updates.email && updates.email !== existingUser.email) {
+      const emailExists = await replica.user.findUnique({
+        where: { email: updates.email },
+      });
+      
+      if (emailExists) {
+        throw new Error('Email already exists');
+      }
+    }
+
+    // Write to primary
+    return primary.user.update({
+      where: { id: userId },
+      data: updates,
+    });
+  }
+}
+```
+
+## Database Sharding
+
+### Sharding Strategy
+```tsx
+// lib/db/sharding.ts
+import { PrismaClient } from '@prisma/client';
+
+export interface ShardConfig {
+  id: string;
+  name: string;
+  databaseUrl: string;
+  weight: number; // For weighted round-robin
+  region?: string; // For geographic distribution
+  capacity: number; // Max connections/users
+}
+
+export class ShardingManager {
+  private static shards: Map<string, PrismaClient> = new Map();
+  private static shardConfigs: ShardConfig[] = [];
+  private static currentShardIndex = 0;
+
+  // Initialize shards
+  static initialize(configs: ShardConfig[]) {
+    this.shardConfigs = configs;
+    
+    configs.forEach(config => {
+      const client = new PrismaClient({
+        datasources: {
+          db: { url: config.databaseUrl },
+        },
+      });
+      
+      this.shards.set(config.id, client);
+    });
+
+    console.log(`Initialized ${this.shards.size} database shards`);
+  }
+
+  // Get shard by user ID (consistent hashing)
+  static getShardByUserId(userId: string): PrismaClient {
+    const hash = this.hashUserId(userId);
+    const shardIndex = hash % this.shardConfigs.length;
+    const shardId = this.shardConfigs[shardIndex].id;
+    
+    return this.shards.get(shardId)!;
+  }
+
+  // Get shard by specific criteria
+  static getShardByCriteria(criteria: {
+    region?: string;
+    capacity?: number;
+    strategy?: 'round-robin' | 'weighted' | 'least-connections';
+  }): PrismaClient {
+    const { region, capacity, strategy = 'round-robin' } = criteria;
+
+    let availableShards = this.shardConfigs;
+
+    // Filter by region if specified
+    if (region) {
+      availableShards = availableShards.filter(shard => shard.region === region);
+    }
+
+    // Filter by capacity if specified
+    if (capacity) {
+      availableShards = availableShards.filter(shard => shard.capacity >= capacity);
+    }
+
+    if (availableShards.length === 0) {
+      throw new Error('No suitable shard found');
+    }
+
+    // Select shard based on strategy
+    switch (strategy) {
+      case 'round-robin':
+        return this.getShardByRoundRobin(availableShards);
+      case 'weighted':
+        return this.getShardByWeighted(availableShards);
+      case 'least-connections':
+        return this.getShardByLeastConnections(availableShards);
+      default:
+        return this.getShardByRoundRobin(availableShards);
+    }
+  }
+
+  // Round-robin selection
+  private static getShardByRoundRobin(availableShards: ShardConfig[]): PrismaClient {
+    const shard = availableShards[this.currentShardIndex % availableShards.length];
+    this.currentShardIndex = (this.currentShardIndex + 1) % availableShards.length;
+    
+    return this.shards.get(shard.id)!;
+  }
+
+  // Weighted selection
+  private static getShardByWeighted(availableShards: ShardConfig[]): PrismaClient {
+    const totalWeight = availableShards.reduce((sum, shard) => sum + shard.weight, 0);
+    let random = Math.random() * totalWeight;
+    
+    for (const shard of availableShards) {
+      random -= shard.weight;
+      if (random <= 0) {
+        return this.shards.get(shard.id)!;
+      }
+    }
+    
+    // Fallback to first available shard
+    return this.shards.get(availableShards[0].id)!;
+  }
+
+  // Least connections selection
+  private static getShardByLeastConnections(availableShards: ShardConfig[]): PrismaClient {
+    // This is a simplified version - in practice you'd track actual connection counts
+    const shard = availableShards.reduce((min, current) => 
+      current.capacity < min.capacity ? current : min
+    );
+    
+    return this.shards.get(shard.id)!;
+  }
+
+  // Hash user ID for consistent shard assignment
+  private static hashUserId(userId: string): number {
+    let hash = 0;
+    for (let i = 0; i < userId.length; i++) {
+      const char = userId.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }
+
+  // Get shard info
+  static getShardInfo(): Array<ShardConfig & { client: PrismaClient }> {
+    return this.shardConfigs.map(config => ({
+      ...config,
+      client: this.shards.get(config.id)!,
+    }));
+  }
+
+  // Health check for all shards
+  static async healthCheck(): Promise<Array<{ shardId: string; healthy: boolean; error?: string }>> {
+    const results = await Promise.all(
+      Array.from(this.shards.entries()).map(async ([shardId, client]) => {
+        try {
+          await client.$queryRaw`SELECT 1`;
+          return { shardId, healthy: true };
+        } catch (error: any) {
+          return { shardId, healthy: false, error: error.message };
+        }
+      })
+    );
+
+    return results;
+  }
+
+  // Graceful shutdown
+  static async shutdown(): Promise<void> {
+    await Promise.all(
+      Array.from(this.shards.values()).map(client => client.$disconnect())
+    );
+  }
+}
+
+// Example shard configuration
+const shardConfigs: ShardConfig[] = [
+  {
+    id: 'shard-1',
+    name: 'Primary Shard',
+    databaseUrl: process.env.SHARD_1_DATABASE_URL!,
+    weight: 3,
+    region: 'us-east-1',
+    capacity: 10000,
+  },
+  {
+    id: 'shard-2',
+    name: 'Secondary Shard',
+    databaseUrl: process.env.SHARD_2_DATABASE_URL!,
+    weight: 2,
+    region: 'us-west-2',
+    capacity: 8000,
+  },
+  {
+    id: 'shard-3',
+    name: 'Tertiary Shard',
+    databaseUrl: process.env.SHARD_3_DATABASE_URL!,
+    weight: 1,
+    region: 'eu-west-1',
+    capacity: 6000,
+  },
+];
+
+// Initialize sharding
+ShardingManager.initialize(shardConfigs);
+```
+
+## Backup and Recovery
+
+### Backup Service
+```tsx
+// lib/db/backup.ts
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import { S3 } from 'aws-sdk';
+import { Readable } from 'stream';
+import { createGzip } from 'zlib';
+import { pipeline } from 'stream/promises';
+
+const execAsync = promisify(exec);
+
+export interface BackupConfig {
+  type: 'full' | 'incremental' | 'differential';
+  compression: boolean;
+  encryption: boolean;
+  retention: number; // days
+  storage: 'local' | 's3' | 'gcs';
+  schedule: string; // cron expression
+}
+
+export class DatabaseBackupService {
+  private static s3Client: S3;
+
+  // Initialize backup service
+  static initialize() {
+    if (process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) {
+      this.s3Client = new S3({
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        region: process.env.AWS_REGION || 'us-east-1',
+      });
+    }
+  }
+
+  // Create full backup
+  static async createFullBackup(config: BackupConfig): Promise<string> {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupName = `full-backup-${timestamp}.sql`;
+    const backupPath = `/tmp/${backupName}`;
+
+    try {
+      // Create PostgreSQL dump
+      const dumpCommand = this.buildDumpCommand(backupPath, config);
+      await execAsync(dumpCommand);
+
+      // Compress if enabled
+      let finalBackupPath = backupPath;
+      if (config.compression) {
+        finalBackupPath = await this.compressBackup(backupPath);
+      }
+
+      // Encrypt if enabled
+      if (config.encryption) {
+        finalBackupPath = await this.encryptBackup(finalBackupPath);
+      }
+
+      // Upload to storage
+      const backupUrl = await this.uploadBackup(finalBackupPath, backupName, config);
+
+      // Clean up local files
+      await this.cleanupLocalFiles([backupPath, finalBackupPath]);
+
+      console.log(`Full backup completed: ${backupUrl}`);
+      return backupUrl;
+    } catch (error) {
+      console.error('Backup failed:', error);
+      throw error;
+    }
+  }
+
+  // Create incremental backup
+  static async createIncrementalBackup(config: BackupConfig): Promise<string> {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupName = `incremental-backup-${timestamp}.sql`;
+    const backupPath = `/tmp/${backupName}`;
+
+    try {
+      // Get last backup timestamp
+      const lastBackup = await this.getLastBackupTimestamp();
+      
+      // Create incremental dump
+      const dumpCommand = this.buildIncrementalDumpCommand(backupPath, lastBackup, config);
+      await execAsync(dumpCommand);
+
+      // Process backup (compression, encryption, upload)
+      const backupUrl = await this.processBackup(backupPath, backupName, config);
+
+      console.log(`Incremental backup completed: ${backupUrl}`);
+      return backupUrl;
+    } catch (error) {
+      console.error('Incremental backup failed:', error);
+      throw error;
+    }
+  }
+
+  // Restore from backup
+  static async restoreFromBackup(backupUrl: string, config: BackupConfig): Promise<void> {
+    try {
+      // Download backup
+      const localPath = await this.downloadBackup(backupUrl);
+
+      // Decrypt if needed
+      let decryptedPath = localPath;
+      if (config.encryption) {
+        decryptedPath = await this.decryptBackup(localPath);
+      }
+
+      // Decompress if needed
+      let finalPath = decryptedPath;
+      if (config.compression) {
+        finalPath = await this.decompressBackup(decryptedPath);
+      }
+
+      // Restore database
+      await this.restoreDatabase(finalPath);
+
+      // Clean up
+      await this.cleanupLocalFiles([localPath, decryptedPath, finalPath]);
+
+      console.log('Database restore completed successfully');
+    } catch (error) {
+      console.error('Database restore failed:', error);
+      throw error;
+    }
+  }
+
+  // Build dump command
+  private static buildDumpCommand(backupPath: string, config: BackupConfig): string {
+    const baseCommand = `pg_dump -h ${process.env.DB_HOST} -U ${process.env.DB_USER} -d ${process.env.DB_NAME}`;
+    
+    let command = baseCommand;
+    
+    if (config.compression) {
+      command += ' -Z 9'; // Maximum compression
+    }
+    
+    if (config.encryption) {
+      command += ' --no-password'; // Will prompt for password
+    }
+    
+    command += ` -f ${backupPath}`;
+    
+    return command;
+  }
+
+  // Build incremental dump command
+  private static buildIncrementalDumpCommand(
+    backupPath: string,
+    sinceTimestamp: string,
+    config: BackupConfig
+  ): string {
+    const baseCommand = `pg_dump -h ${process.env.DB_HOST} -U ${process.env.DB_USER} -d ${process.env.DB_NAME}`;
+    
+    let command = baseCommand;
+    
+    // Add incremental options
+    command += ` --since="${sinceTimestamp}"`;
+    command += ` --format=custom`;
+    
+    if (config.compression) {
+      command += ' -Z 9';
+    }
+    
+    command += ` -f ${backupPath}`;
+    
+    return command;
+  }
+
+  // Compress backup
+  private static async compressBackup(filePath: string): Promise<string> {
+    const compressedPath = `${filePath}.gz`;
+    
+    const gzip = createGzip();
+    const input = require('fs').createReadStream(filePath);
+    const output = require('fs').createWriteStream(compressedPath);
+    
+    await pipeline(input, gzip, output);
+    
+    return compressedPath;
+  }
+
+  // Encrypt backup
+  private static async encryptBackup(filePath: string): Promise<string> {
+    const encryptedPath = `${filePath}.enc`;
+    const password = process.env.BACKUP_ENCRYPTION_PASSWORD;
+    
+    if (!password) {
+      throw new Error('Backup encryption password not configured');
+    }
+    
+    const command = `openssl enc -aes-256-cbc -salt -in ${filePath} -out ${encryptedPath} -pass pass:${password}`;
+    await execAsync(command);
+    
+    return encryptedPath;
+  }
+
+  // Upload backup to storage
+  private static async uploadBackup(
+    localPath: string,
+    backupName: string,
+    config: BackupConfig
+  ): Promise<string> {
+    switch (config.storage) {
+      case 's3':
+        return this.uploadToS3(localPath, backupName);
+      case 'local':
+        return this.moveToLocalStorage(localPath, backupName);
+      default:
+        throw new Error(`Unsupported storage type: ${config.storage}`);
+    }
+  }
+
+  // Upload to S3
+  private static async uploadToS3(localPath: string, backupName: string): Promise<string> {
+    if (!this.s3Client) {
+      throw new Error('S3 client not initialized');
+    }
+    
+    const bucketName = process.env.BACKUP_S3_BUCKET!;
+    const key = `backups/${new Date().toISOString().split('T')[0]}/${backupName}`;
+    
+    const fileStream = require('fs').createReadStream(localPath);
+    
+    await this.s3Client.upload({
+      Bucket: bucketName,
+      Key: key,
+      Body: fileStream,
+      ServerSideEncryption: 'AES256',
+    }).promise();
+    
+    return `s3://${bucketName}/${key}`;
+  }
+
+  // Move to local storage
+  private static async moveToLocalStorage(localPath: string, backupName: string): Promise<string> {
+    const storageDir = process.env.BACKUP_LOCAL_DIR || '/backups';
+    const targetPath = `${storageDir}/${backupName}`;
+    
+    await execAsync(`mv ${localPath} ${targetPath}`);
+    
+    return targetPath;
+  }
+
+  // Get last backup timestamp
+  private static async getLastBackupTimestamp(): Promise<string> {
+    // This would query your backup metadata storage
+    // For now, return a default value
+    return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(); // 24 hours ago
+  }
+
+  // Download backup
+  private static async downloadBackup(backupUrl: string): Promise<string> {
+    if (backupUrl.startsWith('s3://')) {
+      return this.downloadFromS3(backupUrl);
+    } else {
+      return backupUrl; // Local file
+    }
+  }
+
+  // Download from S3
+  private static async downloadFromS3(s3Url: string): Promise<string> {
+    if (!this.s3Client) {
+      throw new Error('S3 client not initialized');
+    }
+    
+    const [bucket, key] = s3Url.replace('s3://', '').split('/', 2);
+    const localPath = `/tmp/${key.split('/').pop()}`;
+    
+    const fileStream = require('fs').createWriteStream(localPath);
+    const s3Stream = this.s3Client.getObject({ Bucket: bucket, Key: key }).createReadStream();
+    
+    await pipeline(s3Stream, fileStream);
+    
+    return localPath;
+  }
+
+  // Decrypt backup
+  private static async decryptBackup(filePath: string): Promise<string> {
+    const decryptedPath = filePath.replace('.enc', '');
+    const password = process.env.BACKUP_ENCRYPTION_PASSWORD;
+    
+    if (!password) {
+      throw new Error('Backup encryption password not configured');
+    }
+    
+    const command = `openssl enc -aes-256-cbc -d -in ${filePath} -out ${decryptedPath} -pass pass:${password}`;
+    await execAsync(command);
+    
+    return decryptedPath;
+  }
+
+  // Decompress backup
+  private static async decompressBackup(filePath: string): Promise<string> {
+    const decompressedPath = filePath.replace('.gz', '');
+    
+    const gunzip = require('zlib').createGunzip();
+    const input = require('fs').createReadStream(filePath);
+    const output = require('fs').createWriteStream(decompressedPath);
+    
+    await pipeline(input, gunzip, output);
+    
+    return decompressedPath;
+  }
+
+  // Restore database
+  private static async restoreDatabase(backupPath: string): Promise<void> {
+    const command = `psql -h ${process.env.DB_HOST} -U ${process.env.DB_USER} -d ${process.env.DB_NAME} -f ${backupPath}`;
+    await execAsync(command);
+  }
+
+  // Process backup (compression, encryption, upload)
+  private static async processBackup(
+    backupPath: string,
+    backupName: string,
+    config: BackupConfig
+  ): Promise<string> {
+    let finalBackupPath = backupPath;
+
+    if (config.compression) {
+      finalBackupPath = await this.compressBackup(backupPath);
+    }
+
+    if (config.encryption) {
+      finalBackupPath = await this.encryptBackup(finalBackupPath);
+    }
+
+    const backupUrl = await this.uploadBackup(finalBackupPath, backupName, config);
+
+    await this.cleanupLocalFiles([backupPath, finalBackupPath]);
+
+    return backupUrl;
+  }
+
+  // Clean up local files
+  private static async cleanupLocalFiles(filePaths: string[]): Promise<void> {
+    for (const filePath of filePaths) {
+      try {
+        await execAsync(`rm -f ${filePath}`);
+      } catch (error) {
+        console.warn(`Failed to remove file ${filePath}:`, error);
+      }
+    }
+  }
+}
+
+// Initialize backup service
+DatabaseBackupService.initialize();
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Use transactions for data consistency
+- Implement connection pooling for performance
+- Use read replicas for read-heavy workloads
+- Implement database sharding for horizontal scaling
+- Set up automated backup and recovery procedures
+- Monitor database performance and health
+- Use appropriate isolation levels
+- Implement retry logic for transient failures
+
+### ❌ Don'ts
+- Don't forget to handle transaction rollbacks
+- Don't ignore connection pool limits
+- Don't skip backup testing
+- Don't forget to monitor replica lag
+- Don't ignore shard distribution
+- Don't skip performance monitoring
+
+### 🔧 Implementation Checklist
+- [ ] Set up connection pooling
+- [ ] Implement transaction management
+- [ ] Configure read replicas
+- [ ] Set up database sharding
+- [ ] Implement backup strategies
+- [ ] Set up monitoring and alerting
+- [ ] Test backup and recovery procedures
+- [ ] Monitor performance metrics
+- [ ] Implement health checks
+- [ ] Set up automated maintenance
+description:
+globs:
+alwaysApply: false
+---
+description:
+globs:
+alwaysApply: false
+---

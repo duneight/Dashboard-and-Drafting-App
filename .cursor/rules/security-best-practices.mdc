@@ -1,0 +1,372 @@
+# Security Best Practices
+
+## Authentication & Authorization
+
+### Secure Session Management
+```tsx
+// lib/auth.ts
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+
+export async function getSession() {
+  const cookieStore = cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options: any) {
+          cookieStore.delete({ name, ...options });
+        },
+      },
+    }
+  );
+
+  const { data: { session } } = await supabase.auth.getSession();
+  return session;
+}
+
+// ✅ Good: Check user permissions
+export async function checkPermission(userId: string, resource: string, action: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { role: true, permissions: true }
+  });
+
+  if (!user) return false;
+
+  // Check role-based permissions
+  const hasPermission = user.permissions.some(
+    p => p.resource === resource && p.action === action
+  );
+
+  return hasPermission;
+}
+```
+
+### Input Validation & Sanitization
+```tsx
+// lib/validation.ts
+import { z } from 'zod';
+
+// ✅ Good: Strict input validation
+export const createUserSchema = z.object({
+  email: z.string().email().max(255),
+  name: z.string().min(1).max(100).regex(/^[a-zA-Z\s]+$/),
+  password: z.string().min(8).regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/),
+  role: z.enum(['user', 'admin']).default('user'),
+});
+
+export const updateUserSchema = createUserSchema.partial().extend({
+  id: z.string().uuid(),
+});
+
+// ✅ Good: Sanitize HTML content
+import DOMPurify from 'isomorphic-dompurify';
+
+export function sanitizeHtml(html: string): string {
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'ul', 'ol', 'li'],
+    ALLOWED_ATTR: [],
+  });
+}
+```
+
+## API Security
+
+### Rate Limiting
+```tsx
+// lib/rateLimit.ts
+import { NextRequest, NextResponse } from 'next/server';
+
+const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
+
+export function rateLimit(
+  request: NextRequest,
+  limit: number = 100,
+  windowMs: number = 15 * 60 * 1000 // 15 minutes
+) {
+  const ip = request.ip || 'unknown';
+  const now = Date.now();
+  
+  const current = rateLimitMap.get(ip);
+  
+  if (!current || now > current.resetTime) {
+    rateLimitMap.set(ip, { count: 1, resetTime: now + windowMs });
+    return null;
+  }
+  
+  if (current.count >= limit) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429 }
+    );
+  }
+  
+  current.count++;
+  return null;
+}
+
+// Usage in API routes
+export async function POST(request: NextRequest) {
+  const rateLimitResult = rateLimit(request, 10, 60 * 1000); // 10 requests per minute
+  if (rateLimitResult) return rateLimitResult;
+  
+  // Your API logic here
+}
+```
+
+### CORS Configuration
+```tsx
+// lib/cors.ts
+import { NextRequest, NextResponse } from 'next/server';
+
+export function cors(request: NextRequest) {
+  const origin = request.headers.get('origin');
+  const allowedOrigins = [
+    'https://mysite.com',
+    'https://myapp.mysite.com',
+    'http://localhost:3000',
+  ];
+
+  if (origin && !allowedOrigins.includes(origin)) {
+    return NextResponse.json(
+      { error: 'CORS not allowed' },
+      { status: 403 }
+    );
+  }
+
+  const response = NextResponse.next();
+  
+  if (origin) {
+    response.headers.set('Access-Control-Allow-Origin', origin);
+  }
+  
+  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  response.headers.set('Access-Control-Allow-Credentials', 'true');
+  
+  return response;
+}
+```
+
+## Database Security
+
+### SQL Injection Prevention
+```tsx
+// ✅ Good: Use Prisma (prevents SQL injection)
+export async function getUserByEmail(email: string) {
+  return prisma.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      // Don't select password hash unless needed
+    }
+  });
+}
+
+// ❌ Bad: Raw SQL (vulnerable to injection)
+// const user = await prisma.$queryRaw`SELECT * FROM users WHERE email = ${email}`;
+```
+
+### Row Level Security (RLS)
+```sql
+-- Enable RLS on all tables
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE comments ENABLE ROW LEVEL SECURITY;
+
+-- Users can only see their own data
+CREATE POLICY "Users can view own profile" ON users
+  FOR SELECT USING (auth.uid() = id);
+
+-- Users can only update their own profile
+CREATE POLICY "Users can update own profile" ON users
+  FOR UPDATE USING (auth.uid() = id);
+
+-- Posts are public but users can only edit their own
+CREATE POLICY "Posts are viewable by everyone" ON posts
+  FOR SELECT USING (true);
+
+CREATE POLICY "Users can edit own posts" ON posts
+  FOR UPDATE USING (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete own posts" ON posts
+  FOR DELETE USING (auth.uid() = user_id);
+```
+
+## Environment Security
+
+### Secure Environment Variables
+```bash
+# .env.local (never commit this file)
+NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your-anon-key"
+DATABASE_URL="postgresql://postgres:[password]@db.[hash].supabase.co:5432/postgres"
+
+# Server-only secrets (not exposed to client)
+JWT_SECRET="your-super-secret-jwt-key"
+ENCRYPTION_KEY="your-32-character-encryption-key"
+STRIPE_SECRET_KEY="sk_test_..."
+```
+
+### Secrets Management
+```tsx
+// lib/secrets.ts
+import { z } from 'zod';
+
+const secretsSchema = z.object({
+  JWT_SECRET: z.string().min(32),
+  ENCRYPTION_KEY: z.string().length(32),
+  STRIPE_SECRET_KEY: z.string().startsWith('sk_'),
+});
+
+export const secrets = secretsSchema.parse({
+  JWT_SECRET: process.env.JWT_SECRET,
+  ENCRYPTION_KEY: process.env.ENCRYPTION_KEY,
+  STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY,
+});
+
+// ✅ Good: Encrypt sensitive data
+import crypto from 'crypto';
+
+export function encrypt(text: string): string {
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipher('aes-256-cbc', secrets.ENCRYPTION_KEY);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return iv.toString('hex') + ':' + encrypted;
+}
+
+export function decrypt(text: string): string {
+  const [ivHex, encrypted] = text.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const decipher = crypto.createDecipher('aes-256-cbc', secrets.ENCRYPTION_KEY);
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+```
+
+## Content Security Policy
+
+### CSP Headers
+```tsx
+// middleware.ts
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+export function middleware(request: NextRequest) {
+  const response = NextResponse.next();
+  
+  // Set security headers
+  response.headers.set(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://vercel.live",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' https://fonts.gstatic.com",
+      "img-src 'self' data: https:",
+      "connect-src 'self' https://*.supabase.co https://vercel.live",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; ')
+  );
+  
+  response.headers.set('X-Frame-Options', 'DENY');
+  response.headers.set('X-Content-Type-Options', 'nosniff');
+  response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  
+  return response;
+}
+```
+
+## File Upload Security
+
+### Secure File Handling
+```tsx
+// lib/fileUpload.ts
+import { z } from 'zod';
+
+const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'] as const;
+const maxSize = 5 * 1024 * 1024; // 5MB
+
+export const fileUploadSchema = z.object({
+  file: z
+    .instanceof(File)
+    .refine((file) => file.size <= maxSize, 'File size must be less than 5MB')
+    .refine((file) => allowedTypes.includes(file.type as any), 'Invalid file type'),
+});
+
+export async function validateAndUploadFile(file: File) {
+  const result = fileUploadSchema.safeParse({ file });
+  
+  if (!result.success) {
+    throw new Error(result.error.errors[0].message);
+  }
+  
+  // Generate secure filename
+  const extension = file.name.split('.').pop();
+  const filename = `${crypto.randomUUID()}.${extension}`;
+  
+  // Upload to Supabase Storage with RLS policies
+  const { data, error } = await supabase.storage
+    .from('uploads')
+    .upload(`public/${filename}`, file, {
+      cacheControl: '3600',
+      upsert: false,
+    });
+    
+  if (error) throw error;
+  
+  return data.path;
+}
+```
+
+## Security Monitoring
+
+### Audit Logging
+```tsx
+// lib/audit.ts
+export async function logSecurityEvent(
+  userId: string,
+  action: string,
+  resource: string,
+  details?: Record<string, any>
+) {
+  await prisma.securityAuditLog.create({
+    data: {
+      userId,
+      action,
+      resource,
+      details: details ? JSON.stringify(details) : null,
+      ipAddress: 'extracted-from-request',
+      userAgent: 'extracted-from-request',
+      timestamp: new Date(),
+    },
+  });
+}
+
+// Usage
+await logSecurityEvent(
+  user.id,
+  'LOGIN_SUCCESS',
+  'auth',
+  { method: 'email', ip: request.ip }
+);
+```
+description:
+globs:
+alwaysApply: false
+---

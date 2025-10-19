@@ -1,0 +1,1034 @@
+# Caching Strategies Best Practices
+
+## Caching Strategy Overview
+
+### Cache Layers
+```tsx
+// ✅ Good: Multi-layer caching approach
+type CacheLayer = 
+  | 'browser'        // Browser cache, localStorage, sessionStorage
+  | 'cdn'            // Content Delivery Network
+  | 'application'    // In-memory cache, Redis
+  | 'database'       // Query cache, connection pooling
+  | 'external'       // Third-party API caching
+```
+
+### Cache Types
+```tsx
+// ✅ Good: Different cache types for different use cases
+type CacheType = 
+  | 'static'         // Never changes (CSS, JS, images)
+  | 'dynamic'        // Changes occasionally (user profiles)
+  | 'volatile'       // Changes frequently (real-time data)
+  | 'computed'       // Expensive calculations
+  | 'session'        // User session data
+```
+
+## Redis Caching Patterns
+
+### Redis Client Setup
+```tsx
+// lib/cache/redis.ts
+import { Redis } from '@upstash/redis';
+import { logError } from '@/lib/logger';
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+// Redis connection health check
+export const checkRedisHealth = async (): Promise<boolean> => {
+  try {
+    await redis.ping();
+    return true;
+  } catch (error) {
+    logError('Redis health check failed', { error: error.message });
+    return false;
+  }
+};
+
+// Graceful fallback when Redis is unavailable
+export const withRedisFallback = async <T>(
+  redisOperation: () => Promise<T>,
+  fallback: () => T
+): Promise<T> => {
+  try {
+    return await redisOperation();
+  } catch (error) {
+    logError('Redis operation failed, using fallback', { error: error.message });
+    return fallback();
+  }
+};
+```
+
+### Basic Caching Operations
+```tsx
+// lib/cache/operations.ts
+import { redis, withRedisFallback } from './redis';
+
+export interface CacheOptions {
+  ttl?: number;           // Time to live in seconds
+  prefix?: string;        // Key prefix for organization
+  serialize?: boolean;    // Whether to serialize/deserialize data
+}
+
+export class CacheManager {
+  private prefix: string;
+  private defaultTTL: number;
+
+  constructor(prefix: string = 'vanwyck', defaultTTL: number = 3600) {
+    this.prefix = prefix;
+    this.defaultTTL = defaultTTL;
+  }
+
+  private getKey(key: string): string {
+    return `${this.prefix}:${key}`;
+  }
+
+  // Set cache with TTL
+  async set<T>(
+    key: string, 
+    value: T, 
+    options: CacheOptions = {}
+  ): Promise<void> {
+    const { ttl = this.defaultTTL, serialize = true } = options;
+    const cacheKey = this.getKey(key);
+    const cacheValue = serialize ? JSON.stringify(value) : value;
+
+    try {
+      await redis.setex(cacheKey, ttl, cacheValue);
+    } catch (error) {
+      logError('Failed to set cache', { key: cacheKey, error: error.message });
+    }
+  }
+
+  // Get cache value
+  async get<T>(key: string, options: CacheOptions = {}): Promise<T | null> {
+    const { serialize = true } = options;
+    const cacheKey = this.getKey(key);
+
+    try {
+      const value = await redis.get(cacheKey);
+      if (value === null) return null;
+
+      return serialize ? JSON.parse(value as string) : value;
+    } catch (error) {
+      logError('Failed to get cache', { key: cacheKey, error: error.message });
+      return null;
+    }
+  }
+
+  // Delete cache key
+  async delete(key: string): Promise<void> {
+    const cacheKey = this.getKey(key);
+
+    try {
+      await redis.del(cacheKey);
+    } catch (error) {
+      logError('Failed to delete cache', { key: cacheKey, error: error.message });
+    }
+  }
+
+  // Check if key exists
+  async exists(key: string): Promise<boolean> {
+    const cacheKey = this.getKey(key);
+
+    try {
+      const result = await redis.exists(cacheKey);
+      return result === 1;
+    } catch (error) {
+      logError('Failed to check cache existence', { key: cacheKey, error: error.message });
+      return false;
+    }
+  }
+
+  // Set multiple keys at once
+  async mset<T>(entries: Array<{ key: string; value: T; ttl?: number }>): Promise<void> {
+    const pipeline = redis.pipeline();
+
+    entries.forEach(({ key, value, ttl = this.defaultTTL }) => {
+      const cacheKey = this.getKey(key);
+      const cacheValue = JSON.stringify(value);
+      pipeline.setex(cacheKey, ttl, cacheValue);
+    });
+
+    try {
+      await pipeline.exec();
+    } catch (error) {
+      logError('Failed to set multiple cache entries', { error: error.message });
+    }
+  }
+
+  // Get multiple keys at once
+  async mget<T>(keys: string[]): Promise<Array<T | null>> {
+    const cacheKeys = keys.map(key => this.getKey(key));
+
+    try {
+      const values = await redis.mget(...cacheKeys);
+      return values.map(value => 
+        value ? JSON.parse(value as string) : null
+      );
+    } catch (error) {
+      logError('Failed to get multiple cache entries', { error: error.message });
+      return keys.map(() => null);
+    }
+  }
+
+  // Increment counter
+  async increment(key: string, amount: number = 1): Promise<number> {
+    const cacheKey = this.getKey(key);
+
+    try {
+      return await redis.incrby(cacheKey, amount);
+    } catch (error) {
+      logError('Failed to increment cache', { key: cacheKey, error: error.message });
+      return 0;
+    }
+  }
+
+  // Set cache with expiration
+  async setex<T>(key: string, ttl: number, value: T): Promise<void> {
+    await this.set(key, value, { ttl });
+  }
+
+  // Get TTL for key
+  async ttl(key: string): Promise<number> {
+    const cacheKey = this.getKey(key);
+
+    try {
+      return await redis.ttl(cacheKey);
+    } catch (error) {
+      logError('Failed to get TTL', { key: cacheKey, error: error.message });
+      return -1;
+    }
+  }
+}
+
+// Global cache instance
+export const cache = new CacheManager();
+```
+
+### Advanced Caching Patterns
+```tsx
+// lib/cache/patterns.ts
+import { cache } from './operations';
+
+// Cache-aside pattern
+export const cacheAside = async <T>(
+  key: string,
+  fetchData: () => Promise<T>,
+  options: CacheOptions = {}
+): Promise<T> => {
+  // Try to get from cache first
+  let data = await cache.get<T>(key, options);
+  
+  if (data !== null) {
+    return data;
+  }
+
+  // If not in cache, fetch from source
+  data = await fetchData();
+  
+  // Store in cache for future requests
+  await cache.set(key, data, options);
+  
+  return data;
+};
+
+// Write-through pattern
+export const writeThrough = async <T>(
+  key: string,
+  value: T,
+  writeOperation: () => Promise<void>,
+  options: CacheOptions = {}
+): Promise<void> => {
+  // Write to cache and data source simultaneously
+  await Promise.all([
+    cache.set(key, value, options),
+    writeOperation(),
+  ]);
+};
+
+// Write-behind pattern
+export const writeBehind = async <T>(
+  key: string,
+  value: T,
+  writeOperation: () => Promise<void>,
+  options: CacheOptions = {}
+): Promise<void> => {
+  // Write to cache immediately
+  await cache.set(key, value, options);
+  
+  // Queue write operation for later
+  setImmediate(async () => {
+    try {
+      await writeOperation();
+    } catch (error) {
+      logError('Write-behind operation failed', { key, error: error.message });
+    }
+  });
+};
+
+// Cache invalidation patterns
+export const invalidatePattern = async (pattern: string): Promise<void> => {
+  try {
+    const keys = await redis.keys(pattern);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  } catch (error) {
+    logError('Failed to invalidate cache pattern', { pattern, error: error.message });
+  }
+};
+
+// Tag-based cache invalidation
+export const tagBasedInvalidation = {
+  // Add tags to cache entry
+  setWithTags: async <T>(
+    key: string,
+    value: T,
+    tags: string[],
+    options: CacheOptions = {}
+  ): Promise<void> => {
+    await Promise.all([
+      cache.set(key, value, options),
+      cache.set(`tags:${key}`, tags, { ttl: options.ttl || 3600 }),
+    ]);
+  },
+
+  // Invalidate all entries with specific tag
+  invalidateByTag: async (tag: string): Promise<void> => {
+    try {
+      const pattern = `tags:*`;
+      const tagKeys = await redis.keys(pattern);
+      
+      for (const tagKey of tagKeys) {
+        const tags = await cache.get<string[]>(tagKey.replace('tags:', ''));
+        if (tags && tags.includes(tag)) {
+          const mainKey = tagKey.replace('tags:', '');
+          await cache.delete(mainKey);
+          await cache.delete(tagKey);
+        }
+      }
+    } catch (error) {
+      logError('Failed to invalidate by tag', { tag, error: error.message });
+    }
+  },
+};
+
+// Circuit breaker pattern for cache
+export class CacheCircuitBreaker {
+  private failures = 0;
+  private lastFailure = 0;
+  private readonly threshold = 5;
+  private readonly timeout = 60000; // 1 minute
+
+  async execute<T>(operation: () => Promise<T>): Promise<T | null> {
+    if (this.isOpen()) {
+      return null;
+    }
+
+    try {
+      const result = await operation();
+      this.onSuccess();
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+
+  private isOpen(): boolean {
+    if (this.failures >= this.threshold) {
+      const timeSinceLastFailure = Date.now() - this.lastFailure;
+      if (timeSinceLastFailure < this.timeout) {
+        return true;
+      }
+      // Reset after timeout
+      this.failures = 0;
+    }
+    return false;
+  }
+
+  private onSuccess(): void {
+    this.failures = 0;
+  }
+
+  private onFailure(): void {
+    this.failures++;
+    this.lastFailure = Date.now();
+  }
+}
+```
+
+### User Data Caching
+```tsx
+// lib/cache/user-cache.ts
+import { cache } from './operations';
+import { prisma } from '@/lib/db';
+
+export class UserCache {
+  private static readonly TTL = 1800; // 30 minutes
+  private static readonly PROFILE_TTL = 3600; // 1 hour
+  private static readonly PREFERENCES_TTL = 7200; // 2 hours
+
+  // Cache user profile
+  static async getUserProfile(userId: string) {
+    return cacheAside(
+      `user:profile:${userId}`,
+      () => prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          avatar: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      { ttl: this.PROFILE_TTL }
+    );
+  }
+
+  // Cache user preferences
+  static async getUserPreferences(userId: string) {
+    return cacheAside(
+      `user:preferences:${userId}`,
+      () => prisma.userPreferences.findUnique({
+        where: { userId },
+      }),
+      { ttl: this.PREFERENCES_TTL }
+    );
+  }
+
+  // Cache user posts
+  static async getUserPosts(userId: string, page: number = 1, limit: number = 20) {
+    const cacheKey = `user:posts:${userId}:${page}:${limit}`;
+    
+    return cacheAside(
+      cacheKey,
+      () => prisma.post.findMany({
+        where: { authorId: userId },
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          categories: true,
+          _count: { select: { comments: true, likes: true } },
+        },
+      }),
+      { ttl: this.TTL }
+    );
+  }
+
+  // Invalidate user cache when user is updated
+  static async invalidateUser(userId: string): Promise<void> {
+    const patterns = [
+      `user:profile:${userId}`,
+      `user:preferences:${userId}`,
+      `user:posts:${userId}:*`,
+    ];
+
+    await Promise.all(
+      patterns.map(pattern => invalidatePattern(pattern))
+    );
+  }
+
+  // Cache user search results
+  static async cacheUserSearch(query: string, results: any[], page: number, limit: number) {
+    const cacheKey = `search:users:${query}:${page}:${limit}`;
+    await cache.set(cacheKey, results, { ttl: 300 }); // 5 minutes
+  }
+
+  // Get cached user search results
+  static async getCachedUserSearch(query: string, page: number, limit: number) {
+    const cacheKey = `search:users:${query}:${page}:${limit}`;
+    return cache.get(cacheKey);
+  }
+}
+```
+
+## CDN Strategies
+
+### CDN Configuration
+```tsx
+// lib/cdn/config.ts
+export const CDN_CONFIG = {
+  // Image optimization
+  images: {
+    baseUrl: process.env.NEXT_PUBLIC_CDN_URL || 'https://cdn.vanwyck.com',
+    formats: ['webp', 'avif', 'jpeg'] as const,
+    sizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840] as const,
+    quality: 80,
+    placeholder: 'blur',
+  },
+
+  // Static assets
+  static: {
+    baseUrl: process.env.NEXT_PUBLIC_STATIC_CDN_URL || 'https://static.vanwyck.com',
+    cacheControl: 'public, max-age=31536000, immutable', // 1 year
+    gzip: true,
+    brotli: true,
+  },
+
+  // API responses
+  api: {
+    baseUrl: process.env.NEXT_PUBLIC_API_CDN_URL || 'https://api-cdn.vanwyck.com',
+    cacheControl: 'public, max-age=300, s-maxage=600', // 5 min browser, 10 min CDN
+  },
+} as const;
+
+// CDN utility functions
+export const getCDNUrl = (path: string, type: keyof typeof CDN_CONFIG = 'static'): string => {
+  const config = CDN_CONFIG[type];
+  return `${config.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
+};
+
+export const getImageUrl = (
+  path: string,
+  width?: number,
+  height?: number,
+  format?: typeof CDN_CONFIG.images.formats[number]
+): string => {
+  const baseUrl = CDN_CONFIG.images.baseUrl;
+  const params = new URLSearchParams();
+  
+  if (width) params.append('w', width.toString());
+  if (height) params.append('h', height.toString());
+  if (format) params.append('f', format);
+  params.append('q', CDN_CONFIG.images.quality.toString());
+  
+  const queryString = params.toString();
+  return `${baseUrl}${path}${queryString ? `?${queryString}` : ''}`;
+};
+```
+
+### Next.js Image Optimization
+```tsx
+// next.config.js
+const nextConfig = {
+  images: {
+    domains: ['cdn.vanwyck.com', 'static.vanwyck.com'],
+    formats: ['image/webp', 'image/avif'],
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920, 2048, 3840],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+    minimumCacheTTL: 60,
+    dangerouslyAllowSVG: true,
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
+  },
+};
+
+// components/OptimizedImage.tsx
+import Image from 'next/image';
+import { getImageUrl } from '@/lib/cdn/config';
+
+interface OptimizedImageProps {
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+  priority?: boolean;
+  className?: string;
+}
+
+export function OptimizedImage({
+  src,
+  alt,
+  width,
+  height,
+  priority = false,
+  className,
+}: OptimizedImageProps) {
+  const imageUrl = getImageUrl(src, width, height, 'webp');
+
+  return (
+    <Image
+      src={imageUrl}
+      alt={alt}
+      width={width}
+      height={height}
+      priority={priority}
+      className={className}
+      placeholder="blur"
+      blurDataURL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k="
+    />
+  );
+}
+```
+
+## Browser Caching
+
+### Cache Headers Configuration
+```tsx
+// lib/cache/browser-cache.ts
+export const CACHE_HEADERS = {
+  // Static assets (never change)
+  static: {
+    'Cache-Control': 'public, max-age=31536000, immutable',
+    'ETag': true,
+  },
+
+  // Dynamic content (changes occasionally)
+  dynamic: {
+    'Cache-Control': 'public, max-age=300, s-maxage=600',
+    'ETag': true,
+    'Last-Modified': true,
+  },
+
+  // API responses (short-lived)
+  api: {
+    'Cache-Control': 'private, max-age=60, s-maxage=300',
+    'ETag': true,
+  },
+
+  // User-specific content (no cache)
+  private: {
+    'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+  },
+} as const;
+
+// Middleware for setting cache headers
+export const withCacheHeaders = (
+  handler: Function,
+  cacheType: keyof typeof CACHE_HEADERS = 'dynamic'
+) => {
+  return async (request: NextRequest) => {
+    const response = await handler(request);
+    
+    // Set cache headers based on type
+    const headers = CACHE_HEADERS[cacheType];
+    Object.entries(headers).forEach(([key, value]) => {
+      if (typeof value === 'string') {
+        response.headers.set(key, value);
+      }
+    });
+
+    // Add ETag if enabled
+    if (headers.ETag) {
+      const etag = generateETag(response.body);
+      response.headers.set('ETag', etag);
+    }
+
+    // Add Last-Modified if enabled
+    if (headers['Last-Modified']) {
+      response.headers.set('Last-Modified', new Date().toUTCString());
+    }
+
+    return response;
+  };
+};
+
+// ETag generation
+export const generateETag = (content: string | Buffer): string => {
+  const hash = require('crypto').createHash('md5');
+  hash.update(content);
+  return `"${hash.digest('hex')}"`;
+};
+
+// Conditional request handling
+export const handleConditionalRequest = (
+  request: NextRequest,
+  response: NextResponse,
+  content: string | Buffer
+): NextResponse | null => {
+  const ifNoneMatch = request.headers.get('if-none-match');
+  const ifModifiedSince = request.headers.get('if-modified-since');
+
+  const etag = generateETag(content);
+  const lastModified = new Date().toUTCString();
+
+  // Check ETag
+  if (ifNoneMatch === etag) {
+    return new NextResponse(null, { status: 304 });
+  }
+
+  // Check Last-Modified
+  if (ifModifiedSince) {
+    const lastModifiedDate = new Date(ifModifiedSince);
+    const contentDate = new Date();
+    
+    if (contentDate <= lastModifiedDate) {
+      return new NextResponse(null, { status: 304 });
+    }
+  }
+
+  // Set response headers
+  response.headers.set('ETag', etag);
+  response.headers.set('Last-Modified', lastModified);
+
+  return null;
+};
+```
+
+### Service Worker Caching
+```tsx
+// public/sw.js
+const CACHE_NAME = 'vanwyck-v1';
+const STATIC_CACHE = 'vanwyck-static-v1';
+const DYNAMIC_CACHE = 'vanwyck-dynamic-v1';
+
+const STATIC_ASSETS = [
+  '/',
+  '/static/css/main.css',
+  '/static/js/main.js',
+  '/static/images/logo.png',
+];
+
+// Install event - cache static assets
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(STATIC_CACHE).then((cache) => {
+      return cache.addAll(STATIC_ASSETS);
+    })
+  );
+});
+
+// Activate event - clean up old caches
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME && 
+              cacheName !== STATIC_CACHE && 
+              cacheName !== DYNAMIC_CACHE) {
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    })
+  );
+});
+
+// Fetch event - serve from cache or network
+self.addEventListener('fetch', (event) => {
+  const { request } = event;
+  const url = new URL(request.url);
+
+  // Skip non-GET requests
+  if (request.method !== 'GET') {
+    return;
+  }
+
+  // Handle static assets
+  if (STATIC_ASSETS.includes(url.pathname)) {
+    event.respondWith(
+      caches.match(request).then((response) => {
+        return response || fetch(request);
+      })
+    );
+    return;
+  }
+
+  // Handle API requests
+  if (url.pathname.startsWith('/api/')) {
+    event.respondWith(
+      caches.open(DYNAMIC_CACHE).then((cache) => {
+        return fetch(request).then((response) => {
+          // Cache successful responses
+          if (response.status === 200) {
+            cache.put(request, response.clone());
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // Handle other requests
+  event.respondWith(
+    fetch(request).catch(() => {
+      return caches.match(request);
+    })
+  );
+});
+```
+
+## Database Query Optimization
+
+### Query Caching with Prisma
+```tsx
+// lib/cache/query-cache.ts
+import { cache } from './operations';
+import { prisma } from '@/lib/db';
+
+export class QueryCache {
+  private static readonly TTL = 1800; // 30 minutes
+
+  // Cache complex queries
+  static async cachedQuery<T>(
+    key: string,
+    query: () => Promise<T>,
+    ttl: number = this.TTL
+  ): Promise<T> {
+    return cacheAside(key, query, { ttl });
+  }
+
+  // Cache paginated results
+  static async cachedPaginatedQuery<T>(
+    baseKey: string,
+    page: number,
+    limit: number,
+    query: () => Promise<{ data: T[]; total: number }>,
+    ttl: number = this.TTL
+  ): Promise<{ data: T[]; total: number }> {
+    const cacheKey = `${baseKey}:${page}:${limit}`;
+    
+    return cacheAside(cacheKey, query, { ttl });
+  }
+
+  // Cache with dependencies
+  static async cachedQueryWithDeps<T>(
+    key: string,
+    dependencies: string[],
+    query: () => Promise<T>,
+    ttl: number = this.TTL
+  ): Promise<T> {
+    const depsKey = `deps:${key}`;
+    const depsHash = await this.getDependenciesHash(dependencies);
+    
+    // Check if dependencies changed
+    const cachedDeps = await cache.get<string>(depsKey);
+    if (cachedDeps === depsHash) {
+      const result = await cache.get<T>(key);
+      if (result !== null) {
+        return result;
+      }
+    }
+
+    // Execute query and cache results
+    const result = await query();
+    await Promise.all([
+      cache.set(key, result, { ttl }),
+      cache.set(depsKey, depsHash, { ttl }),
+    ]);
+
+    return result;
+  }
+
+  // Get dependencies hash
+  private static async getDependenciesHash(dependencies: string[]): Promise<string> {
+    const hash = require('crypto').createHash('md5');
+    
+    for (const dep of dependencies) {
+      const value = await cache.get(dep);
+      hash.update(dep + (value ? JSON.stringify(value) : ''));
+    }
+    
+    return hash.digest('hex');
+  }
+
+  // Invalidate query cache
+  static async invalidateQuery(pattern: string): Promise<void> {
+    await invalidatePattern(pattern);
+  }
+
+  // Invalidate related queries
+  static async invalidateRelated(entity: string, id: string): Promise<void> {
+    const patterns = [
+      `${entity}:*`,
+      `list:${entity}:*`,
+      `search:${entity}:*`,
+    ];
+
+    await Promise.all(
+      patterns.map(pattern => invalidatePattern(pattern))
+    );
+  }
+}
+
+// Usage examples
+export const userQueries = {
+  // Get user with caching
+  getUser: (id: string) => 
+    QueryCache.cachedQuery(`user:${id}`, () =>
+      prisma.user.findUnique({
+        where: { id },
+        include: { preferences: true },
+      })
+    ),
+
+  // Get users list with caching
+  getUsers: (page: number, limit: number, search?: string) =>
+    QueryCache.cachedPaginatedQuery(
+      `users:list:${search || 'all'}`,
+      page,
+      limit,
+      () => prisma.user.findManyAndCount({
+        where: search ? {
+          OR: [
+            { firstName: { contains: search, mode: 'insensitive' } },
+            { lastName: { contains: search, mode: 'insensitive' } },
+          ],
+        } : {},
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      })
+    ),
+
+  // Get user posts with caching
+  getUserPosts: (userId: string, page: number, limit: number) =>
+    QueryCache.cachedPaginatedQuery(
+      `user:posts:${userId}`,
+      page,
+      limit,
+      () => prisma.post.findManyAndCount({
+        where: { authorId: userId },
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: { categories: true },
+      })
+    ),
+};
+```
+
+## Cache Invalidation Strategies
+
+### Smart Cache Invalidation
+```tsx
+// lib/cache/invalidation.ts
+import { cache } from './operations';
+import { prisma } from '@/lib/db';
+
+export class CacheInvalidator {
+  // Invalidate cache when data changes
+  static async invalidateOnChange(entity: string, operation: 'create' | 'update' | 'delete', id?: string) {
+    const patterns = this.getInvalidationPatterns(entity, operation, id);
+    
+    await Promise.all(
+      patterns.map(pattern => invalidatePattern(pattern))
+    );
+  }
+
+  // Get invalidation patterns based on operation
+  private static getInvalidationPatterns(entity: string, operation: string, id?: string): string[] {
+    const basePatterns = [
+      `${entity}:*`,
+      `list:${entity}:*`,
+      `search:${entity}:*`,
+    ];
+
+    if (id) {
+      basePatterns.push(`${entity}:${id}`);
+    }
+
+    // Add specific patterns for different operations
+    switch (operation) {
+      case 'create':
+        basePatterns.push(`count:${entity}`);
+        break;
+      case 'update':
+        basePatterns.push(`count:${entity}`);
+        break;
+      case 'delete':
+        basePatterns.push(`count:${entity}`);
+        break;
+    }
+
+    return basePatterns;
+  }
+
+  // Invalidate related entities
+  static async invalidateRelated(entity: string, relations: string[]): Promise<void> {
+    const patterns = relations.flatMap(relation => [
+      `${relation}:*`,
+      `list:${relation}:*`,
+      `search:${relation}:*`,
+    ]);
+
+    await Promise.all(
+      patterns.map(pattern => invalidatePattern(pattern))
+    );
+  }
+
+  // Time-based invalidation
+  static async scheduleInvalidation(key: string, delay: number): Promise<void> {
+    setTimeout(async () => {
+      await cache.delete(key);
+    }, delay);
+  }
+
+  // Batch invalidation
+  static async batchInvalidate(patterns: string[]): Promise<void> {
+    const uniquePatterns = [...new Set(patterns)];
+    
+    await Promise.all(
+      uniquePatterns.map(pattern => invalidatePattern(pattern))
+    );
+  }
+}
+
+// Prisma middleware for automatic cache invalidation
+export const cacheInvalidationMiddleware = async (
+  params: any,
+  next: any
+) => {
+  const result = await next(params);
+
+  // Invalidate cache based on operation
+  if (params.action === 'create') {
+    await CacheInvalidator.invalidateOnChange(params.model, 'create');
+  } else if (params.action === 'update') {
+    await CacheInvalidator.invalidateOnChange(params.model, 'update', params.args?.where?.id);
+  } else if (params.action === 'delete') {
+    await CacheInvalidator.invalidateOnChange(params.model, 'delete', params.args?.where?.id);
+  }
+
+  return result;
+};
+
+// Apply middleware to Prisma
+if (process.env.NODE_ENV === 'production') {
+  prisma.$use(cacheInvalidationMiddleware);
+}
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Use multi-layer caching strategy
+- Implement proper TTL for different data types
+- Use cache-aside pattern for read-heavy data
+- Implement cache invalidation strategies
+- Use CDN for static assets
+- Set appropriate browser cache headers
+- Cache expensive database queries
+- Monitor cache hit rates and performance
+- Implement circuit breaker for cache failures
+- Use tags for related cache invalidation
+
+### ❌ Don'ts
+- Don't cache everything without strategy
+- Don't forget to invalidate cache on updates
+- Don't use too long TTL for dynamic data
+- Don't ignore cache memory usage
+- Don't cache sensitive user data
+- Don't skip cache monitoring
+- Don't use cache as primary data source
+- Don't forget fallback strategies
+
+### 🔧 Implementation Checklist
+- [ ] Set up Redis caching infrastructure
+- [ ] Implement cache-aside pattern for queries
+- [ ] Configure CDN for static assets
+- [ ] Set proper browser cache headers
+- [ ] Implement cache invalidation strategies
+- [ ] Add cache monitoring and metrics
+- [ ] Set up service worker for offline support
+- [ ] Optimize database queries with caching
+- [ ] Implement circuit breaker patterns
+- [ ] Test cache performance and hit rates
+- [ ] Document caching strategies
+- [ ] Set up cache warming for critical data
+description:
+globs:
+alwaysApply: false
+---

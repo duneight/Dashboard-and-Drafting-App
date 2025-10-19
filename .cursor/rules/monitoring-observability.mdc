@@ -1,0 +1,1274 @@
+# Monitoring & Observability Best Practices
+
+## Monitoring Strategy Overview
+
+### Observability Pillars
+```tsx
+// ✅ Good: Three pillars of observability
+type ObservabilityPillar = 
+  | 'metrics'        // Quantitative measurements
+  | 'logs'           // Structured event records
+  | 'traces'         // Request flow tracking
+```
+
+### Monitoring Levels
+```tsx
+// ✅ Good: Multi-level monitoring approach
+type MonitoringLevel = 
+  | 'infrastructure' // Servers, databases, networks
+  | 'application'    // App performance, errors, business logic
+  | 'user'           // User experience, behavior, satisfaction
+  | 'business'       // Business metrics, KPIs, revenue
+```
+
+## Application Performance Monitoring (APM)
+
+### Core Web Vitals Monitoring
+```tsx
+// lib/monitoring/web-vitals.ts
+import { getCLS, getFID, getFCP, getLCP, getTTFB } from 'web-vitals';
+
+export interface WebVitalsData {
+  cls: number;      // Cumulative Layout Shift
+  fid: number;      // First Input Delay
+  fcp: number;      // First Contentful Paint
+  lcp: number;      // Largest Contentful Paint
+  ttfb: number;     // Time to First Byte
+  timestamp: number;
+  url: string;
+  userAgent: string;
+}
+
+export class WebVitalsMonitor {
+  private static instance: WebVitalsMonitor;
+  private metrics: WebVitalsData[] = [];
+
+  static getInstance(): WebVitalsMonitor {
+    if (!WebVitalsMonitor.instance) {
+      WebVitalsMonitor.instance = new WebVitalsMonitor();
+    }
+    return WebVitalsMonitor.instance;
+  }
+
+  startMonitoring(): void {
+    // Monitor Core Web Vitals
+    getCLS(this.handleCLS);
+    getFID(this.handleFID);
+    getFCP(this.handleFCP);
+    getLCP(this.handleLCP);
+    getTTFB(this.handleTTFB);
+  }
+
+  private handleCLS = (metric: any): void => {
+    this.recordMetric('cls', metric.value);
+  };
+
+  private handleFID = (metric: any): void => {
+    this.recordMetric('fid', metric.value);
+  };
+
+  private handleFCP = (metric: any): void => {
+    this.recordMetric('fcp', metric.value);
+  };
+
+  private handleLCP = (metric: any): void => {
+    this.recordMetric('lcp', metric.value);
+  };
+
+  private handleTTFB = (metric: any): void => {
+    this.recordMetric('ttfb', metric.value);
+  };
+
+  private recordMetric(type: keyof Omit<WebVitalsData, 'timestamp' | 'url' | 'userAgent'>, value: number): void {
+    const metric: WebVitalsData = {
+      cls: 0,
+      fid: 0,
+      fcp: 0,
+      lcp: 0,
+      ttfb: 0,
+      timestamp: Date.now(),
+      url: window.location.href,
+      userAgent: navigator.userAgent,
+      [type]: value,
+    };
+
+    this.metrics.push(metric);
+    this.sendToAnalytics(metric);
+  }
+
+  private async sendToAnalytics(metric: WebVitalsData): Promise<void> {
+    try {
+      await fetch('/api/analytics/web-vitals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(metric),
+      });
+    } catch (error) {
+      console.error('Failed to send web vitals:', error);
+    }
+  }
+
+  getMetrics(): WebVitalsData[] {
+    return [...this.metrics];
+  }
+
+  getAverageMetrics(): Partial<WebVitalsData> {
+    if (this.metrics.length === 0) return {};
+
+    const sums = this.metrics.reduce((acc, metric) => ({
+      cls: acc.cls + metric.cls,
+      fid: acc.fid + metric.fid,
+      fcp: acc.fcp + metric.fcp,
+      lcp: acc.lcp + metric.lcp,
+      ttfb: acc.ttfb + metric.ttfb,
+    }), { cls: 0, fid: 0, fcp: 0, lcp: 0, ttfb: 0 });
+
+    const count = this.metrics.length;
+    return {
+      cls: sums.cls / count,
+      fid: sums.fid / count,
+      fcp: sums.fcp / count,
+      lcp: sums.lcp / count,
+      ttfb: sums.ttfb / count,
+    };
+  }
+}
+
+// Initialize monitoring
+export const webVitalsMonitor = WebVitalsMonitor.getInstance();
+```
+
+### Performance Metrics Collection
+```tsx
+// lib/monitoring/performance.ts
+export interface PerformanceMetrics {
+  // Navigation timing
+  navigationStart: number;
+  domContentLoaded: number;
+  loadComplete: number;
+  
+  // Resource timing
+  resourceCount: number;
+  resourceLoadTime: number;
+  
+  // Memory usage
+  memoryUsed: number;
+  memoryLimit: number;
+  
+  // Custom metrics
+  customMetrics: Record<string, number>;
+}
+
+export class PerformanceMonitor {
+  private static instance: PerformanceMonitor;
+  private metrics: PerformanceMetrics[] = [];
+
+  static getInstance(): PerformanceMonitor {
+    if (!PerformanceMonitor.instance) {
+      PerformanceMonitor.instance = new PerformanceMonitor();
+    }
+    return PerformanceMonitor.instance;
+  }
+
+  startMonitoring(): void {
+    // Monitor page load performance
+    this.monitorPageLoad();
+    
+    // Monitor resource loading
+    this.monitorResourceLoading();
+    
+    // Monitor memory usage
+    this.monitorMemoryUsage();
+    
+    // Monitor long tasks
+    this.monitorLongTasks();
+  }
+
+  private monitorPageLoad(): void {
+    if (typeof window !== 'undefined' && 'performance' in window) {
+      window.addEventListener('load', () => {
+        const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+        
+        const metrics: PerformanceMetrics = {
+          navigationStart: navigation.startTime,
+          domContentLoaded: navigation.domContentLoadedEventEnd - navigation.startTime,
+          loadComplete: navigation.loadEventEnd - navigation.startTime,
+          resourceCount: 0,
+          resourceLoadTime: 0,
+          memoryUsed: 0,
+          memoryLimit: 0,
+          customMetrics: {},
+        };
+
+        this.recordMetrics(metrics);
+      });
+    }
+  }
+
+  private monitorResourceLoading(): void {
+    if (typeof window !== 'undefined' && 'performance' in window) {
+      const observer = new PerformanceObserver((list) => {
+        const entries = list.getEntries();
+        let totalLoadTime = 0;
+        
+        entries.forEach((entry) => {
+          if (entry.entryType === 'resource') {
+            totalLoadTime += entry.duration;
+          }
+        });
+
+        const metrics: Partial<PerformanceMetrics> = {
+          resourceCount: entries.length,
+          resourceLoadTime: totalLoadTime,
+        };
+
+        this.updateMetrics(metrics);
+      });
+
+      observer.observe({ entryTypes: ['resource'] });
+    }
+  }
+
+  private monitorMemoryUsage(): void {
+    if (typeof window !== 'undefined' && 'memory' in performance) {
+      const memory = (performance as any).memory;
+      
+      const metrics: Partial<PerformanceMetrics> = {
+        memoryUsed: memory.usedJSHeapSize,
+        memoryLimit: memory.jsHeapSizeLimit,
+      };
+
+      this.updateMetrics(metrics);
+    }
+  }
+
+  private monitorLongTasks(): void {
+    if (typeof window !== 'undefined' && 'PerformanceObserver' in window) {
+      const observer = new PerformanceObserver((list) => {
+        list.getEntries().forEach((entry) => {
+          if (entry.duration > 50) { // 50ms threshold
+            this.recordLongTask(entry);
+          }
+        });
+      });
+
+      observer.observe({ entryTypes: ['longtask'] });
+    }
+  }
+
+  private recordMetrics(metrics: PerformanceMetrics): void {
+    this.metrics.push(metrics);
+    this.sendToAnalytics(metrics);
+  }
+
+  private updateMetrics(partialMetrics: Partial<PerformanceMetrics>): void {
+    if (this.metrics.length > 0) {
+      const lastMetric = this.metrics[this.metrics.length - 1];
+      Object.assign(lastMetric, partialMetrics);
+    }
+  }
+
+  private recordLongTask(entry: PerformanceEntry): void {
+    const longTaskData = {
+      type: 'long-task',
+      duration: entry.duration,
+      startTime: entry.startTime,
+      timestamp: Date.now(),
+      url: window.location.href,
+    };
+
+    this.sendToAnalytics(longTaskData);
+  }
+
+  private async sendToAnalytics(data: any): Promise<void> {
+    try {
+      await fetch('/api/analytics/performance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    } catch (error) {
+      console.error('Failed to send performance metrics:', error);
+    }
+  }
+
+  // Custom metric recording
+  recordCustomMetric(name: string, value: number): void {
+    if (this.metrics.length > 0) {
+      const lastMetric = this.metrics[this.metrics.length - 1];
+      lastMetric.customMetrics[name] = value;
+    }
+  }
+
+  getMetrics(): PerformanceMetrics[] {
+    return [...this.metrics];
+  }
+}
+
+export const performanceMonitor = PerformanceMonitor.getInstance();
+```
+
+## Error Tracking & Monitoring
+
+### Error Boundary with Sentry Integration
+```tsx
+// lib/monitoring/error-tracking.ts
+import * as Sentry from '@sentry/nextjs';
+
+export interface ErrorContext {
+  userId?: string;
+  sessionId?: string;
+  url?: string;
+  userAgent?: string;
+  timestamp: number;
+  errorType: 'client' | 'server' | 'api';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  tags?: Record<string, string>;
+  extra?: Record<string, any>;
+}
+
+export class ErrorTracker {
+  private static instance: ErrorTracker;
+  private isInitialized = false;
+
+  static getInstance(): ErrorTracker {
+    if (!ErrorTracker.instance) {
+      ErrorTracker.instance = new ErrorTracker();
+    }
+    return ErrorTracker.instance;
+  }
+
+  initialize(): void {
+    if (this.isInitialized) return;
+
+    // Initialize Sentry
+    Sentry.init({
+      dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+      environment: process.env.NODE_ENV,
+      tracesSampleRate: 1.0,
+      integrations: [
+        new Sentry.BrowserTracing({
+          tracePropagationTargets: ['localhost', 'vanwyck.com'],
+        }),
+      ],
+      beforeSend(event) {
+        // Filter out certain errors
+        if (event.exception) {
+          const error = event.exception.values?.[0];
+          if (error?.value?.includes('ResizeObserver loop limit exceeded')) {
+            return null; // Ignore ResizeObserver errors
+          }
+        }
+        return event;
+      },
+    });
+
+    this.isInitialized = true;
+  }
+
+  // Capture client-side errors
+  captureError(error: Error, context?: Partial<ErrorContext>): void {
+    if (!this.isInitialized) return;
+
+    const errorContext: ErrorContext = {
+      timestamp: Date.now(),
+      errorType: 'client',
+      severity: 'medium',
+      url: typeof window !== 'undefined' ? window.location.href : undefined,
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+      ...context,
+    };
+
+    Sentry.captureException(error, {
+      tags: errorContext.tags,
+      extra: {
+        ...errorContext.extra,
+        context: errorContext,
+      },
+      level: this.mapSeverityToLevel(errorContext.severity),
+    });
+
+    // Also send to custom analytics
+    this.sendToAnalytics(error, errorContext);
+  }
+
+  // Capture API errors
+  captureAPIError(error: any, endpoint: string, context?: Partial<ErrorContext>): void {
+    if (!this.isInitialized) return;
+
+    const errorContext: ErrorContext = {
+      timestamp: Date.now(),
+      errorType: 'api',
+      severity: 'high',
+      url: endpoint,
+      ...context,
+    };
+
+    Sentry.captureException(error, {
+      tags: {
+        ...errorContext.tags,
+        endpoint,
+        errorType: 'api',
+      },
+      extra: {
+        ...errorContext.extra,
+        context: errorContext,
+        endpoint,
+      },
+      level: this.mapSeverityToLevel(errorContext.severity),
+    });
+
+    this.sendToAnalytics(error, errorContext);
+  }
+
+  // Capture server-side errors
+  captureServerError(error: Error, context?: Partial<ErrorContext>): void {
+    if (!this.isInitialized) return;
+
+    const errorContext: ErrorContext = {
+      timestamp: Date.now(),
+      errorType: 'server',
+      severity: 'high',
+      ...context,
+    };
+
+    Sentry.captureException(error, {
+      tags: errorContext.tags,
+      extra: {
+        ...errorContext.extra,
+        context: errorContext,
+      },
+      level: this.mapSeverityToLevel(errorContext.severity),
+    });
+
+    this.sendToAnalytics(error, errorContext);
+  }
+
+  // Set user context for error tracking
+  setUser(user: { id: string; email?: string; username?: string }): void {
+    if (!this.isInitialized) return;
+
+    Sentry.setUser({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+    });
+  }
+
+  // Set tags for error categorization
+  setTags(tags: Record<string, string>): void {
+    if (!this.isInitialized) return;
+
+    Sentry.setTags(tags);
+  }
+
+  // Set extra context data
+  setExtra(key: string, value: any): void {
+    if (!this.isInitialized) return;
+
+    Sentry.setExtra(key, value);
+  }
+
+  private mapSeverityToLevel(severity: ErrorContext['severity']): Sentry.SeverityLevel {
+    switch (severity) {
+      case 'low': return Sentry.Severity.Info;
+      case 'medium': return Sentry.Severity.Warning;
+      case 'high': return Sentry.Severity.Error;
+      case 'critical': return Sentry.Severity.Fatal;
+      default: return Sentry.Severity.Error;
+    }
+  }
+
+  private async sendToAnalytics(error: any, context: ErrorContext): Promise<void> {
+    try {
+      await fetch('/api/analytics/errors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          error: {
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
+          },
+          context,
+        }),
+      });
+    } catch (analyticsError) {
+      console.error('Failed to send error to analytics:', analyticsError);
+    }
+  }
+}
+
+export const errorTracker = ErrorTracker.getInstance();
+```
+
+### Error Boundary Component
+```tsx
+// components/ErrorBoundary.tsx
+"use client";
+import { Component, ReactNode } from 'react';
+import { errorTracker } from '@/lib/monitoring/error-tracking';
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+  onError?: (error: Error, errorInfo: any) => void;
+}
+
+interface State {
+  hasError: boolean;
+  error?: Error;
+}
+
+export class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: any): void {
+    // Track error with Sentry
+    errorTracker.captureError(error, {
+      errorType: 'client',
+      severity: 'high',
+      tags: {
+        component: 'ErrorBoundary',
+        errorInfo: JSON.stringify(errorInfo),
+      },
+    });
+
+    // Call custom error handler
+    if (this.props.onError) {
+      this.props.onError(error, errorInfo);
+    }
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="max-w-md w-full bg-white shadow-lg rounded-lg p-6">
+            <div className="text-center">
+              <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                <svg className="h-6 w-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              </div>
+              <h3 className="mt-4 text-lg font-medium text-gray-900">Something went wrong</h3>
+              <p className="mt-2 text-sm text-gray-500">
+                We're sorry, but something unexpected happened. Please try refreshing the page.
+              </p>
+              <div className="mt-6">
+                <button
+                  onClick={() => window.location.reload()}
+                  className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700"
+                >
+                  Refresh Page
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+```
+
+## User Analytics & Behavior Tracking
+
+### Analytics Service
+```tsx
+// lib/analytics/analytics.ts
+export interface AnalyticsEvent {
+  event: string;
+  properties?: Record<string, any>;
+  userId?: string;
+  sessionId?: string;
+  timestamp: number;
+  url: string;
+  userAgent?: string;
+}
+
+export interface UserProperties {
+  userId: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  plan?: string;
+  signupDate: Date;
+  lastSeen: Date;
+}
+
+export interface SessionProperties {
+  sessionId: string;
+  userId?: string;
+  startTime: Date;
+  lastActivity: Date;
+  pageViews: number;
+  events: number;
+  referrer?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+}
+
+export class AnalyticsService {
+  private static instance: AnalyticsService;
+  private sessionId: string;
+  private userId?: string;
+  private sessionStart: Date;
+  private pageViews = 0;
+  private events = 0;
+
+  static getInstance(): AnalyticsService {
+    if (!AnalyticsService.instance) {
+      AnalyticsService.instance = new AnalyticsService();
+    }
+    return AnalyticsService.instance;
+  }
+
+  constructor() {
+    this.sessionId = this.generateSessionId();
+    this.sessionStart = new Date();
+    this.initializeSession();
+  }
+
+  private generateSessionId(): string {
+    return 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+  }
+
+  private initializeSession(): void {
+    // Track session start
+    this.track('session_start', {
+      sessionId: this.sessionId,
+      referrer: document.referrer,
+      utmSource: this.getUTMParameter('utm_source'),
+      utmMedium: this.getUTMParameter('utm_medium'),
+      utmCampaign: this.getUTMParameter('utm_campaign'),
+    });
+
+    // Track page view
+    this.trackPageView();
+
+    // Set up page view tracking
+    if (typeof window !== 'undefined') {
+      window.addEventListener('popstate', () => this.trackPageView());
+      
+      // Track page views for SPA navigation
+      const originalPushState = history.pushState;
+      const originalReplaceState = history.replaceState;
+      
+      history.pushState = (...args) => {
+        originalPushState.apply(history, args);
+        this.trackPageView();
+      };
+      
+      history.replaceState = (...args) => {
+        originalReplaceState.apply(history, args);
+        this.trackPageView();
+      };
+    }
+  }
+
+  // Track custom events
+  track(event: string, properties?: Record<string, any>): void {
+    this.events++;
+
+    const analyticsEvent: AnalyticsEvent = {
+      event,
+      properties,
+      userId: this.userId,
+      sessionId: this.sessionId,
+      timestamp: Date.now(),
+      url: typeof window !== 'undefined' ? window.location.href : '',
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+    };
+
+    // Send to analytics endpoint
+    this.sendToAnalytics(analyticsEvent);
+
+    // Send to external analytics (if configured)
+    this.sendToExternalAnalytics(analyticsEvent);
+  }
+
+  // Track page views
+  trackPageView(): void {
+    this.pageViews++;
+    
+    this.track('page_view', {
+      path: typeof window !== 'undefined' ? window.location.pathname : '',
+      title: typeof document !== 'undefined' ? document.title : '',
+      referrer: document.referrer,
+    });
+  }
+
+  // Track user actions
+  trackUserAction(action: string, target?: string, value?: any): void {
+    this.track('user_action', {
+      action,
+      target,
+      value,
+    });
+  }
+
+  // Track form interactions
+  trackFormInteraction(formId: string, action: 'focus' | 'blur' | 'submit' | 'error', field?: string): void {
+    this.track('form_interaction', {
+      formId,
+      action,
+      field,
+    });
+  }
+
+  // Track conversion events
+  trackConversion(conversionType: string, value?: number, currency?: string): void {
+    this.track('conversion', {
+      type: conversionType,
+      value,
+      currency,
+    });
+  }
+
+  // Set user identity
+  identify(userId: string, properties?: Partial<UserProperties>): void {
+    this.userId = userId;
+    
+    this.track('user_identify', {
+      userId,
+      ...properties,
+    });
+  }
+
+  // Get session properties
+  getSessionProperties(): SessionProperties {
+    return {
+      sessionId: this.sessionId,
+      userId: this.userId,
+      startTime: this.sessionStart,
+      lastActivity: new Date(),
+      pageViews: this.pageViews,
+      events: this.events,
+      referrer: document.referrer,
+      utmSource: this.getUTMParameter('utm_source'),
+      utmMedium: this.getUTMParameter('utm_medium'),
+      utmCampaign: this.getUTMParameter('utm_campaign'),
+    };
+  }
+
+  private getUTMParameter(name: string): string | undefined {
+    if (typeof window === 'undefined') return undefined;
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(name) || undefined;
+  }
+
+  private async sendToAnalytics(event: AnalyticsEvent): Promise<void> {
+    try {
+      await fetch('/api/analytics/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(event),
+      });
+    } catch (error) {
+      console.error('Failed to send analytics event:', error);
+    }
+  }
+
+  private sendToExternalAnalytics(event: AnalyticsEvent): void {
+    // Send to Google Analytics 4
+    if (typeof window !== 'undefined' && (window as any).gtag) {
+      (window as any).gtag('event', event.event, {
+        ...event.properties,
+        custom_parameters: {
+          sessionId: event.sessionId,
+          userId: event.userId,
+        },
+      });
+    }
+
+    // Send to Mixpanel
+    if (typeof window !== 'undefined' && (window as any).mixpanel) {
+      (window as any).mixpanel.track(event.event, {
+        ...event.properties,
+        sessionId: event.sessionId,
+        userId: event.userId,
+      });
+    }
+  }
+}
+
+export const analytics = AnalyticsService.getInstance();
+```
+
+## Health Checks & Uptime Monitoring
+
+### Health Check System
+```tsx
+// lib/monitoring/health-checks.ts
+export interface HealthCheckResult {
+  name: string;
+  status: 'healthy' | 'unhealthy' | 'degraded';
+  responseTime: number;
+  lastChecked: Date;
+  details?: any;
+  error?: string;
+}
+
+export interface HealthCheckConfig {
+  name: string;
+  check: () => Promise<boolean>;
+  timeout?: number;
+  interval?: number;
+  retries?: number;
+}
+
+export class HealthCheckSystem {
+  private static instance: HealthCheckSystem;
+  private checks: Map<string, HealthCheckConfig> = new Map();
+  private results: Map<string, HealthCheckResult> = new Map();
+  private intervals: Map<string, NodeJS.Timeout> = new Map();
+
+  static getInstance(): HealthCheckSystem {
+    if (!HealthCheckSystem.instance) {
+      HealthCheckSystem.instance = new HealthCheckSystem();
+    }
+    return HealthCheckSystem.instance;
+  }
+
+  // Add a health check
+  addCheck(config: HealthCheckConfig): void {
+    this.checks.set(config.name, config);
+    
+    // Start monitoring this check
+    this.startMonitoring(config.name);
+  }
+
+  // Remove a health check
+  removeCheck(name: string): void {
+    this.checks.delete(name);
+    
+    // Stop monitoring
+    const interval = this.intervals.get(name);
+    if (interval) {
+      clearInterval(interval);
+      this.intervals.delete(name);
+    }
+  }
+
+  // Start monitoring a specific check
+  private startMonitoring(name: string): void {
+    const config = this.checks.get(name);
+    if (!config) return;
+
+    const interval = setInterval(async () => {
+      await this.runCheck(name);
+    }, config.interval || 30000); // Default: 30 seconds
+
+    this.intervals.set(name, interval);
+  }
+
+  // Run a specific health check
+  private async runCheck(name: string): Promise<void> {
+    const config = this.checks.get(name);
+    if (!config) return;
+
+    const startTime = Date.now();
+    let status: HealthCheckResult['status'] = 'healthy';
+    let error: string | undefined;
+    let details: any = {};
+
+    try {
+      const result = await Promise.race([
+        config.check(),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), config.timeout || 5000)
+        ),
+      ]);
+
+      if (!result) {
+        status = 'unhealthy';
+        error = 'Check returned false';
+      }
+    } catch (err) {
+      status = 'unhealthy';
+      error = err instanceof Error ? err.message : 'Unknown error';
+    }
+
+    const result: HealthCheckResult = {
+      name,
+      status,
+      responseTime: Date.now() - startTime,
+      lastChecked: new Date(),
+      details,
+      error,
+    };
+
+    this.results.set(name, result);
+  }
+
+  // Get health check results
+  getResults(): HealthCheckResult[] {
+    return Array.from(this.results.values());
+  }
+
+  // Get overall system health
+  getSystemHealth(): { status: string; checks: HealthCheckResult[] } {
+    const results = this.getResults();
+    const unhealthyCount = results.filter(r => r.status === 'unhealthy').length;
+    const degradedCount = results.filter(r => r.status === 'degraded').length;
+
+    let status = 'healthy';
+    if (unhealthyCount > 0) {
+      status = 'unhealthy';
+    } else if (degradedCount > 0) {
+      status = 'degraded';
+    }
+
+    return { status, checks: results };
+  }
+
+  // Run all checks immediately
+  async runAllChecks(): Promise<void> {
+    const checkNames = Array.from(this.checks.keys());
+    await Promise.all(checkNames.map(name => this.runCheck(name)));
+  }
+}
+
+// Pre-configured health checks
+export const createHealthChecks = () => {
+  const healthSystem = HealthCheckSystem.getInstance();
+
+  // Database health check
+  healthSystem.addCheck({
+    name: 'database',
+    check: async () => {
+      try {
+        const { prisma } = await import('@/lib/db');
+        await prisma.$queryRaw`SELECT 1`;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    interval: 30000, // 30 seconds
+    timeout: 5000,   // 5 seconds
+  });
+
+  // Redis health check
+  healthSystem.addCheck({
+    name: 'redis',
+    check: async () => {
+      try {
+        const { checkRedisHealth } = await import('@/lib/cache/redis');
+        return await checkRedisHealth();
+      } catch {
+        return false;
+      }
+    },
+    interval: 30000,
+    timeout: 3000,
+  });
+
+  // External API health check
+  healthSystem.addCheck({
+    name: 'external-api',
+    check: async () => {
+      try {
+        const response = await fetch('https://httpbin.org/status/200', {
+          method: 'GET',
+          timeout: 5000,
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
+    },
+    interval: 60000, // 1 minute
+    timeout: 5000,
+  });
+
+  return healthSystem;
+};
+
+export const healthSystem = createHealthChecks();
+```
+
+### Health Check API Endpoint
+```tsx
+// app/api/health/route.ts
+import { NextResponse } from 'next/server';
+import { healthSystem } from '@/lib/monitoring/health-checks';
+
+export async function GET() {
+  try {
+    // Run all health checks
+    await healthSystem.runAllChecks();
+    
+    // Get results
+    const systemHealth = healthSystem.getSystemHealth();
+    
+    // Determine HTTP status
+    let status = 200;
+    if (systemHealth.status === 'unhealthy') {
+      status = 503; // Service Unavailable
+    } else if (systemHealth.status === 'degraded') {
+      status = 200; // Still OK, but with warnings
+    }
+
+    return NextResponse.json(
+      {
+        status: systemHealth.status,
+        timestamp: new Date().toISOString(),
+        checks: systemHealth.checks,
+      },
+      { status }
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
+        error: 'Failed to run health checks',
+      },
+      { status: 500 }
+    );
+  }
+}
+```
+
+## Logging Strategies
+
+### Structured Logging
+```tsx
+// lib/logging/logger.ts
+export interface LogLevel {
+  error: 0;
+  warn: 1;
+  info: 2;
+  debug: 3;
+}
+
+export interface LogEntry {
+  level: keyof LogLevel;
+  message: string;
+  timestamp: string;
+  requestId?: string;
+  userId?: string;
+  sessionId?: string;
+  url?: string;
+  userAgent?: string;
+  metadata?: Record<string, any>;
+  error?: {
+    name: string;
+    message: string;
+    stack?: string;
+  };
+}
+
+export class Logger {
+  private static instance: Logger;
+  private logLevel: keyof LogLevel = 'info';
+  private isDevelopment = process.env.NODE_ENV === 'development';
+
+  static getInstance(): Logger {
+    if (!Logger.instance) {
+      Logger.instance = new Logger();
+    }
+    return Logger.instance;
+  }
+
+  constructor() {
+    // Set log level from environment
+    const envLogLevel = process.env.LOG_LEVEL as keyof LogLevel;
+    if (envLogLevel && ['error', 'warn', 'info', 'debug'].includes(envLogLevel)) {
+      this.logLevel = envLogLevel;
+    }
+  }
+
+  private shouldLog(level: keyof LogLevel): boolean {
+    const levels: LogLevel = { error: 0, warn: 1, info: 2, debug: 3 };
+    return levels[level] <= levels[this.logLevel];
+  }
+
+  private createLogEntry(
+    level: keyof LogLevel,
+    message: string,
+    metadata?: Record<string, any>,
+    error?: Error
+  ): LogEntry {
+    const entry: LogEntry = {
+      level,
+      message,
+      timestamp: new Date().toISOString(),
+      metadata,
+      ...(error && {
+        error: {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        },
+      }),
+    };
+
+    // Add request context if available
+    if (typeof window !== 'undefined') {
+      entry.url = window.location.href;
+      entry.userAgent = navigator.userAgent;
+    }
+
+    return entry;
+  }
+
+  private async sendToLoggingService(entry: LogEntry): Promise<void> {
+    try {
+      await fetch('/api/logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry),
+      });
+    } catch (error) {
+      // Fallback to console if logging service fails
+      console.error('Failed to send log to service:', error);
+    }
+  }
+
+  private formatLog(entry: LogEntry): string {
+    const timestamp = new Date(entry.timestamp).toLocaleISOString();
+    const level = entry.level.toUpperCase().padEnd(5);
+    const metadata = entry.metadata ? ` ${JSON.stringify(entry.metadata)}` : '';
+    const error = entry.error ? `\n  Error: ${entry.error.name}: ${entry.error.message}` : '';
+    
+    return `[${timestamp}] ${level} ${entry.message}${metadata}${error}`;
+  }
+
+  // Log methods
+  error(message: string, metadata?: Record<string, any>, error?: Error): void {
+    if (!this.shouldLog('error')) return;
+
+    const entry = this.createLogEntry('error', message, metadata, error);
+    
+    // Console output in development
+    if (this.isDevelopment) {
+      console.error(this.formatLog(entry));
+    }
+    
+    // Send to logging service
+    this.sendToLoggingService(entry);
+  }
+
+  warn(message: string, metadata?: Record<string, any>): void {
+    if (!this.shouldLog('warn')) return;
+
+    const entry = this.createLogEntry('warn', message, metadata);
+    
+    if (this.isDevelopment) {
+      console.warn(this.formatLog(entry));
+    }
+    
+    this.sendToLoggingService(entry);
+  }
+
+  info(message: string, metadata?: Record<string, any>): void {
+    if (!this.shouldLog('info')) return;
+
+    const entry = this.createLogEntry('info', message, metadata);
+    
+    if (this.isDevelopment) {
+      console.info(this.formatLog(entry));
+    }
+    
+    this.sendToLoggingService(entry);
+  }
+
+  debug(message: string, metadata?: Record<string, any>): void {
+    if (!this.shouldLog('debug')) return;
+
+    const entry = this.createLogEntry('debug', message, metadata);
+    
+    if (this.isDevelopment) {
+      console.debug(this.formatLog(entry));
+    }
+    
+    this.sendToLoggingService(entry);
+  }
+
+  // Set request context for all subsequent logs
+  setRequestContext(requestId: string, userId?: string, sessionId?: string): void {
+    // This would be implemented in middleware or context
+  }
+}
+
+export const logger = Logger.getInstance();
+
+// Convenience functions
+export const logError = (message: string, metadata?: Record<string, any>, error?: Error) => {
+  logger.error(message, metadata, error);
+};
+
+export const logWarn = (message: string, metadata?: Record<string, any>) => {
+  logger.warn(message, metadata);
+};
+
+export const logInfo = (message: string, metadata?: Record<string, any>) => {
+  logger.info(message, metadata);
+};
+
+export const logDebug = (message: string, metadata?: Record<string, any>) => {
+  logger.debug(message, metadata);
+};
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Implement comprehensive monitoring across all layers
+- Use structured logging with consistent formats
+- Track Core Web Vitals and performance metrics
+- Implement proper error tracking and alerting
+- Set up health checks for critical services
+- Monitor user behavior and business metrics
+- Use APM tools for performance insights
+- Implement proper log aggregation and analysis
+- Set up automated alerting for critical issues
+- Monitor both technical and business metrics
+
+### ❌ Don'ts
+- Don't log sensitive information (passwords, tokens)
+- Don't ignore error rates and performance degradation
+- Don't skip monitoring for non-production environments
+- Don't log everything without strategy
+- Don't forget to set up alerting and notifications
+- Don't ignore user experience metrics
+- Don't skip health checks for external dependencies
+- Don't log without proper structure and context
+
+### 🔧 Implementation Checklist
+- [ ] Set up APM monitoring (Sentry, DataDog, New Relic)
+- [ ] Implement Core Web Vitals tracking
+- [ ] Set up error tracking and alerting
+- [ ] Configure health checks for all services
+- [ ] Implement structured logging system
+- [ ] Set up user analytics and behavior tracking
+- [ ] Configure performance monitoring
+- [ ] Set up log aggregation and analysis
+- [ ] Implement automated alerting
+- [ ] Set up uptime monitoring
+- [ ] Configure business metrics tracking
+- [ ] Test monitoring and alerting systems
+- [ ] Document monitoring strategies
+- [ ] Set up dashboards and reporting
+description:
+globs:
+alwaysApply: false
+---

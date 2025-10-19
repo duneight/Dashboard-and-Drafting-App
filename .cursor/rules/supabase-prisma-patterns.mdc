@@ -1,0 +1,293 @@
+# Supabase + Prisma Integration
+
+## Environment Setup
+```bash
+# .env.local
+NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your-anon-key"
+DATABASE_URL="postgresql://postgres:[password]@db.[hash].supabase.co:5432/postgres"
+
+# Optional: Edge Runtime for better performance
+NEXT_PUBLIC_SUPABASE_EDGE_FUNCTION_URL="https://your-project.supabase.co/functions/v1"
+```
+
+## Supabase Client Setup
+
+### Server-Side Client
+```tsx
+// lib/supabaseServer.ts
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+
+export function createSupabaseServer() {
+  const cookieStore = cookies();
+  
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          cookieStore.set({ name, value, ...options });
+        },
+        remove(name: string, options: any) {
+          cookieStore.delete({ name, ...options });
+        },
+      },
+    }
+  );
+}
+```
+
+### Client-Side Client
+```tsx
+// lib/supabaseBrowser.ts
+import { createBrowserClient } from '@supabase/supabase-js';
+
+export function createSupabaseBrowser() {
+  return createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
+```
+
+## Prisma Setup
+```tsx
+// lib/db.ts
+import { PrismaClient } from '@prisma/client';
+
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
+
+export const prisma = globalForPrisma.prisma ?? new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+  // Edge Runtime compatibility
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+});
+
+if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma;
+
+// Edge-compatible client for Vercel Edge Runtime
+export const edgePrisma = new PrismaClient({
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+});
+```
+
+## Authentication Patterns
+
+### Protected Route Wrapper
+```tsx
+// components/ProtectedRoute.tsx
+import { redirect } from 'next/navigation';
+import { createSupabaseServer } from '@/lib/supabaseServer';
+import { cookies } from 'next/headers';
+
+export async function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const supabase = createSupabaseServer();
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) {
+    // Store intended destination for post-login redirect
+    const cookieStore = cookies();
+    const intendedPath = cookieStore.get('intended-path')?.value || '/dashboard';
+    redirect(`/signin?redirect=${encodeURIComponent(intendedPath)}`);
+  }
+  
+  return <>{children}</>;
+}
+```
+
+### Middleware for Route Protection
+```tsx
+// middleware.ts
+import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+export async function middleware(req: NextRequest) {
+  const res = NextResponse.next();
+  const supabase = createMiddlewareClient({ req, res });
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  // Protected routes
+  if (req.nextUrl.pathname.startsWith('/dashboard') && !session) {
+    return NextResponse.redirect(new URL('/signin', req.url));
+  }
+
+  // Auth routes (redirect if already logged in)
+  if (req.nextUrl.pathname.startsWith('/signin') && session) {
+    return NextResponse.redirect(new URL('/dashboard', req.url));
+  }
+
+  return res;
+}
+
+export const config = {
+  matcher: ['/dashboard/:path*', '/signin', '/signup'],
+};
+```
+
+### Auth Context (Client)
+```tsx
+// contexts/AuthContext.tsx
+"use client";
+import { createContext, useContext, useEffect, useState } from 'react';
+import { User } from '@supabase/supabase-js';
+import { createSupabaseBrowser } from '@/lib/supabaseBrowser';
+
+interface AuthContextType {
+  user: User | null;
+  loading: boolean;
+}
+
+const AuthContext = createContext<AuthContextType>({ user: null, loading: true });
+
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const supabase = createSupabaseBrowser();
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setUser(session?.user ?? null);
+        setLoading(false);
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, [supabase.auth]);
+
+  return (
+    <AuthContext.Provider value={{ user, loading }}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export const useAuth = () => useContext(AuthContext);
+```
+
+## Database Operations
+
+### CRUD Operations with Prisma
+```tsx
+// app/api/tasks/route.ts
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import { createSupabaseServer } from '@/lib/supabaseServer';
+
+export async function GET() {
+  try {
+    const supabase = createSupabaseServer();
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const tasks = await prisma.task.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    return NextResponse.json(tasks);
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to fetch tasks' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const supabase = createSupabaseServer();
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { title, description } = await request.json();
+    
+    const task = await prisma.task.create({
+      data: {
+        title,
+        description,
+        userId: user.id,
+      }
+    });
+
+    return NextResponse.json(task, { status: 201 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to create task' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+## Row Level Security (RLS)
+```sql
+-- Enable RLS on tables
+ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
+
+-- Policy: Users can only see their own tasks
+CREATE POLICY "Users can view own tasks" ON tasks
+  FOR SELECT USING (auth.uid() = user_id);
+
+-- Policy: Users can only insert their own tasks
+CREATE POLICY "Users can insert own tasks" ON tasks
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+-- Policy: Users can only update their own tasks
+CREATE POLICY "Users can update own tasks" ON tasks
+  FOR UPDATE USING (auth.uid() = user_id);
+```
+
+## Error Handling
+```tsx
+// lib/errors.ts
+export class AppError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number = 500,
+    public code?: string
+  ) {
+    super(message);
+    this.name = 'AppError';
+  }
+}
+
+export function handlePrismaError(error: any) {
+  if (error.code === 'P2002') {
+    return new AppError('Resource already exists', 409, 'DUPLICATE');
+  }
+  if (error.code === 'P2025') {
+    return new AppError('Resource not found', 404, 'NOT_FOUND');
+  }
+  return new AppError('Database error', 500, 'DB_ERROR');
+}
+```
+description:
+globs:
+alwaysApply: false
+---

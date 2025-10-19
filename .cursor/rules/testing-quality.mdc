@@ -1,0 +1,497 @@
+# Testing & Quality Best Practices
+
+## Testing Strategy
+
+### Testing Pyramid
+```
+    E2E Tests (Playwright/Cypress)
+         /|\
+        / | \
+       /  |  \
+ Integration Tests (API, DB)
+    /|\  |  /|\
+   / | \ | / | \
+Unit Tests (Components, Utils)
+```
+
+### Test Setup with Vitest (Recommended)
+```tsx
+// vitest.config.ts
+import { defineConfig } from 'vitest/config';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./test/setup.ts'],
+    globals: true,
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
+  },
+});
+
+// test/setup.ts
+import '@testing-library/jest-dom';
+import { vi } from 'vitest';
+
+// Mock Next.js router
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+    back: vi.fn(),
+  }),
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => '/',
+}));
+```
+
+## Unit Testing
+
+### Component Testing
+```tsx
+// components/Button.test.tsx
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { Button } from './Button';
+
+describe('Button', () => {
+  it('renders with correct text', () => {
+    render(<Button>Click me</Button>);
+    expect(screen.getByRole('button', { name: /click me/i })).toBeInTheDocument();
+  });
+
+  it('calls onClick when clicked', () => {
+    const handleClick = vi.fn();
+    render(<Button onClick={handleClick}>Click me</Button>);
+    
+    fireEvent.click(screen.getByRole('button'));
+    expect(handleClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies variant classes correctly', () => {
+    const { rerender } = render(<Button variant="primary">Button</Button>);
+    expect(screen.getByRole('button')).toHaveClass('bg-blue-600');
+
+    rerender(<Button variant="secondary">Button</Button>);
+    expect(screen.getByRole('button')).toHaveClass('bg-gray-200');
+  });
+
+  it('is disabled when disabled prop is true', () => {
+    render(<Button disabled>Button</Button>);
+    expect(screen.getByRole('button')).toBeDisabled();
+  });
+});
+```
+
+### Utility Function Testing
+```tsx
+// lib/utils.test.ts
+import { describe, it, expect } from 'vitest';
+import { formatDate, validateEmail, slugify } from './utils';
+
+describe('formatDate', () => {
+  it('formats date correctly', () => {
+    const date = new Date('2024-01-15T10:30:00Z');
+    expect(formatDate(date)).toBe('Jan 15, 2024');
+  });
+
+  it('handles invalid dates', () => {
+    expect(formatDate(new Date('invalid'))).toBe('Invalid Date');
+  });
+});
+
+describe('validateEmail', () => {
+  it('validates correct emails', () => {
+    expect(validateEmail('test@example.com')).toBe(true);
+    expect(validateEmail('user.name+tag@domain.co.uk')).toBe(true);
+  });
+
+  it('rejects invalid emails', () => {
+    expect(validateEmail('invalid-email')).toBe(false);
+    expect(validateEmail('@domain.com')).toBe(false);
+    expect(validateEmail('user@')).toBe(false);
+  });
+});
+
+describe('slugify', () => {
+  it('creates URL-friendly slugs', () => {
+    expect(slugify('Hello World!')).toBe('hello-world');
+    expect(slugify('Special Characters: @#$%')).toBe('special-characters');
+    expect(slugify('Multiple   Spaces')).toBe('multiple-spaces');
+  });
+});
+```
+
+## Integration Testing
+
+### API Route Testing
+```tsx
+// app/api/users/route.test.ts
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { GET, POST } from './route';
+import { prisma } from '@/lib/db';
+
+// Mock Prisma
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    user: {
+      findMany: vi.fn(),
+      create: vi.fn(),
+    },
+  },
+}));
+
+// Mock Supabase auth
+vi.mock('@/lib/supabaseServer', () => ({
+  createSupabaseServer: () => ({
+    auth: {
+      getUser: vi.fn(),
+    },
+  }),
+}));
+
+describe('/api/users', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('GET', () => {
+    it('returns users when authenticated', async () => {
+      const mockUser = { id: '1', email: 'test@example.com' };
+      const mockUsers = [mockUser];
+
+      vi.mocked(prisma.user.findMany).mockResolvedValue(mockUsers);
+      vi.mocked(createSupabaseServer).mockReturnValue({
+        auth: { getUser: vi.fn().mockResolvedValue({ data: { user: mockUser } }) },
+      });
+
+      const response = await GET();
+      const data = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(data).toEqual(mockUsers);
+    });
+
+    it('returns 401 when not authenticated', async () => {
+      vi.mocked(createSupabaseServer).mockReturnValue({
+        auth: { getUser: vi.fn().mockResolvedValue({ data: { user: null } }) },
+      });
+
+      const response = await GET();
+      expect(response.status).toBe(401);
+    });
+  });
+});
+```
+
+### Database Testing
+```tsx
+// test/db-setup.ts
+import { PrismaClient } from '@prisma/client';
+import { beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+
+const prisma = new PrismaClient();
+
+beforeAll(async () => {
+  // Connect to test database
+  await prisma.$connect();
+});
+
+beforeEach(async () => {
+  // Clean database before each test
+  await prisma.user.deleteMany();
+  await prisma.post.deleteMany();
+});
+
+afterEach(async () => {
+  // Clean up after each test
+  await prisma.user.deleteMany();
+  await prisma.post.deleteMany();
+});
+
+afterAll(async () => {
+  await prisma.$disconnect();
+});
+
+export { prisma };
+```
+
+## E2E Testing
+
+### Playwright Setup
+```tsx
+// playwright.config.ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './e2e',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 2 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: 'html',
+  use: {
+    baseURL: 'http://localhost:3000',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+    },
+  ],
+  webServer: {
+    command: 'npm run dev',
+    url: 'http://localhost:3000',
+    reuseExistingServer: !process.env.CI,
+  },
+});
+```
+
+### E2E Test Examples
+```tsx
+// e2e/auth.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Authentication', () => {
+  test('user can sign in with magic link', async ({ page }) => {
+    await page.goto('/signin');
+    
+    await page.fill('[data-testid="email-input"]', 'test@example.com');
+    await page.click('[data-testid="signin-button"]');
+    
+    await expect(page.locator('[data-testid="success-message"]')).toBeVisible();
+    await expect(page.locator('text=Magic link sent')).toBeVisible();
+  });
+
+  test('user is redirected to dashboard after signin', async ({ page }) => {
+    // Mock successful authentication
+    await page.goto('/dashboard');
+    
+    await expect(page.locator('h1')).toContainText('Dashboard');
+    await expect(page.locator('[data-testid="user-menu"]')).toBeVisible();
+  });
+
+  test('protected routes redirect to signin', async ({ page }) => {
+    await page.goto('/dashboard');
+    
+    await expect(page).toHaveURL('/signin');
+    await expect(page.locator('text=Please sign in')).toBeVisible();
+  });
+});
+```
+
+## Code Quality
+
+### ESLint Configuration
+```json
+// .eslintrc.json
+{
+  "extends": [
+    "next/core-web-vitals",
+    "@typescript-eslint/recommended",
+    "prettier"
+  ],
+  "plugins": ["@typescript-eslint", "import"],
+  "rules": {
+    "@typescript-eslint/no-unused-vars": "error",
+    "@typescript-eslint/no-explicit-any": "warn",
+    "import/order": [
+      "error",
+      {
+        "groups": [
+          "builtin",
+          "external",
+          "internal",
+          "parent",
+          "sibling",
+          "index"
+        ],
+        "newlines-between": "always"
+      }
+    ],
+    "prefer-const": "error",
+    "no-var": "error"
+  }
+}
+```
+
+### Prettier Configuration
+```json
+// .prettierrc
+{
+  "semi": true,
+  "trailingComma": "es5",
+  "singleQuote": true,
+  "printWidth": 80,
+  "tabWidth": 2,
+  "useTabs": false,
+  "bracketSpacing": true,
+  "arrowParens": "avoid"
+}
+```
+
+### Pre-commit Hooks
+```json
+// package.json
+{
+  "scripts": {
+    "prepare": "husky install",
+    "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "type-check": "tsc --noEmit",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "husky": "^8.0.0",
+    "lint-staged": "^13.0.0",
+    "prettier": "^3.0.0"
+  }
+}
+
+// .husky/pre-commit
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+
+npx lint-staged
+```
+
+```json
+// .lintstagedrc
+{
+  "*.{js,jsx,ts,tsx}": [
+    "eslint --fix",
+    "prettier --write"
+  ],
+  "*.{json,md}": [
+    "prettier --write"
+  ]
+}
+```
+
+## Performance Testing
+
+### Lighthouse CI
+```yaml
+# .lighthouserc.js
+module.exports = {
+  ci: {
+    collect: {
+      url: ['http://localhost:3000', 'http://localhost:3000/myapp'],
+      startServerCommand: 'npm run dev',
+      startServerReadyPattern: 'ready - started server',
+    },
+    assert: {
+      assertions: {
+        'categories:performance': ['warn', { minScore: 0.8 }],
+        'categories:accessibility': ['error', { minScore: 0.9 }],
+        'categories:best-practices': ['warn', { minScore: 0.8 }],
+        'categories:seo': ['warn', { minScore: 0.8 }],
+      },
+    },
+    upload: {
+      target: 'temporary-public-storage',
+    },
+  },
+};
+```
+
+### Bundle Analysis
+```json
+// package.json
+{
+  "scripts": {
+    "analyze": "ANALYZE=true next build",
+    "build:analyze": "cross-env ANALYZE=true next build"
+  },
+  "devDependencies": {
+    "@next/bundle-analyzer": "^14.0.0",
+    "cross-env": "^7.0.0"
+  }
+}
+
+// next.config.js
+const withBundleAnalyzer = require('@next/bundle-analyzer')({
+  enabled: process.env.ANALYZE === 'true',
+});
+
+module.exports = withBundleAnalyzer({
+  // your next config
+});
+```
+
+## Testing Best Practices
+
+### Test Organization
+```
+tests/
+├── unit/           # Unit tests
+│   ├── components/ # Component tests
+│   ├── lib/        # Utility tests
+│   └── hooks/      # Custom hook tests
+├── integration/    # Integration tests
+│   ├── api/        # API route tests
+│   └── db/         # Database tests
+├── e2e/            # End-to-end tests
+└── fixtures/       # Test data and mocks
+```
+
+### Test Data Management
+```tsx
+// test/fixtures/users.ts
+export const mockUsers = [
+  {
+    id: '1',
+    email: 'admin@example.com',
+    name: 'Admin User',
+    role: 'admin',
+    createdAt: new Date('2024-01-01'),
+  },
+  {
+    id: '2',
+    email: 'user@example.com',
+    name: 'Regular User',
+    role: 'user',
+    createdAt: new Date('2024-01-02'),
+  },
+];
+
+// test/factories/user.ts
+import { faker } from '@faker-js/faker';
+import { User } from '@prisma/client';
+
+export function createMockUser(overrides: Partial<User> = {}): User {
+  return {
+    id: faker.string.uuid(),
+    email: faker.internet.email(),
+    name: faker.person.fullName(),
+    role: 'user',
+    createdAt: faker.date.past(),
+    updatedAt: faker.date.recent(),
+    ...overrides,
+  };
+}
+```
+
+description:
+globs:
+alwaysApply: false
+---
