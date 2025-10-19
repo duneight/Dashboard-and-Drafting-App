@@ -1,0 +1,1180 @@
+# API Design & REST/GraphQL Patterns Best Practices
+
+## API Design Strategy
+
+### Core Principles
+```tsx
+// ✅ Good: REST API design principles
+// - Stateless: Each request contains all information needed
+// - Cacheable: Responses must define themselves as cacheable or not
+// - Uniform Interface: Consistent resource identification and manipulation
+// - Client-Server: Separation of concerns between client and server
+// - Layered System: Client can't tell if connected directly to server
+```
+
+### API Design Patterns
+```tsx
+// ✅ Good: Consistent API structure
+type APIDesign = {
+  baseUrl: string;           // https://api.vanwyck.com/v1
+  versioning: 'url' | 'header' | 'query';
+  authentication: 'bearer' | 'api-key' | 'oauth2';
+  responseFormat: 'json' | 'json-api' | 'graphql';
+  errorHandling: 'standardized' | 'custom';
+  rateLimiting: 'headers' | 'response-body';
+  documentation: 'openapi' | 'graphql-playground';
+};
+```
+
+## REST API Design
+
+### Resource Naming Conventions
+```tsx
+// ✅ Good: RESTful resource naming
+export const API_ENDPOINTS = {
+  // Users
+  users: '/api/v1/users',
+  user: (id: string) => `/api/v1/users/${id}`,
+  userProfile: (id: string) => `/api/v1/users/${id}/profile`,
+  userPosts: (id: string) => `/api/v1/users/${id}/posts`,
+  
+  // Posts
+  posts: '/api/v1/posts',
+  post: (id: string) => `/api/v1/posts/${id}`,
+  postComments: (id: string) => `/api/v1/posts/${id}/comments`,
+  postLikes: (id: string) => `/api/v1/posts/${id}/likes`,
+  
+  // Comments
+  comments: '/api/v1/comments',
+  comment: (id: string) => `/api/v1/comments/${id}`,
+  
+  // Categories
+  categories: '/api/v1/categories',
+  category: (id: string) => `/api/v1/categories/${id}`,
+  categoryPosts: (id: string) => `/api/v1/categories/${id}/posts`,
+} as const;
+
+// ❌ Bad: Non-RESTful naming
+export const BAD_ENDPOINTS = {
+  getUsers: '/api/getUsers',
+  createUser: '/api/createUser',
+  updateUser: '/api/updateUser',
+  deleteUser: '/api/deleteUser',
+};
+```
+
+### HTTP Methods & Status Codes
+```tsx
+// lib/api/http-methods.ts
+export const HTTP_METHODS = {
+  GET: 'GET',           // Retrieve resources
+  POST: 'POST',         // Create resources
+  PUT: 'PUT',           // Update entire resource
+  PATCH: 'PATCH',       // Partial update
+  DELETE: 'DELETE',     // Remove resource
+  HEAD: 'HEAD',         // Get headers only
+  OPTIONS: 'OPTIONS',   // Get allowed methods
+} as const;
+
+export const HTTP_STATUS_CODES = {
+  // 2xx Success
+  OK: 200,                    // Request succeeded
+  CREATED: 201,               // Resource created
+  ACCEPTED: 202,              // Request accepted for processing
+  NO_CONTENT: 204,            // Request succeeded, no content
+  
+  // 3xx Redirection
+  MOVED_PERMANENTLY: 301,     // Resource moved permanently
+  FOUND: 302,                 // Resource found temporarily
+  NOT_MODIFIED: 304,          // Resource not modified
+  
+  // 4xx Client Errors
+  BAD_REQUEST: 400,           // Invalid request
+  UNAUTHORIZED: 401,          // Authentication required
+  FORBIDDEN: 403,             // Access forbidden
+  NOT_FOUND: 404,             // Resource not found
+  METHOD_NOT_ALLOWED: 405,    // HTTP method not allowed
+  CONFLICT: 409,              // Resource conflict
+  UNPROCESSABLE_ENTITY: 422,  // Validation failed
+  TOO_MANY_REQUESTS: 429,     // Rate limit exceeded
+  
+  // 5xx Server Errors
+  INTERNAL_SERVER_ERROR: 500, // Server error
+  NOT_IMPLEMENTED: 501,       // Method not implemented
+  BAD_GATEWAY: 502,           // Bad gateway
+  SERVICE_UNAVAILABLE: 503,   // Service unavailable
+} as const;
+```
+
+### Standard API Response Format
+```tsx
+// lib/api/response-types.ts
+export interface APIResponse<T = any> {
+  success: boolean;
+  data?: T;
+  error?: {
+    code: string;
+    message: string;
+    details?: any;
+    field?: string;
+  };
+  meta?: {
+    timestamp: string;
+    requestId: string;
+    pagination?: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  };
+}
+
+export interface PaginatedResponse<T> extends APIResponse<T[]> {
+  meta: {
+    timestamp: string;
+    requestId: string;
+    pagination: {
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+    };
+  };
+}
+
+// Response utility functions
+export const createSuccessResponse = <T>(
+  data: T,
+  meta?: Partial<APIResponse<T>['meta']>
+): APIResponse<T> => ({
+  success: true,
+  data,
+  meta: {
+    timestamp: new Date().toISOString(),
+    requestId: generateRequestId(),
+    ...meta,
+  },
+});
+
+export const createErrorResponse = (
+  code: string,
+  message: string,
+  details?: any,
+  field?: string
+): APIResponse => ({
+  success: false,
+  error: {
+    code,
+    message,
+    details,
+    field,
+  },
+  meta: {
+    timestamp: new Date().toISOString(),
+    requestId: generateRequestId(),
+  },
+});
+
+export const createPaginatedResponse = <T>(
+  data: T[],
+  page: number,
+  limit: number,
+  total: number
+): PaginatedResponse<T> => ({
+  success: true,
+  data,
+  meta: {
+    timestamp: new Date().toISOString(),
+    requestId: generateRequestId(),
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+    },
+  },
+});
+```
+
+### API Route Implementation
+```tsx
+// app/api/v1/users/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import { 
+  createSuccessResponse, 
+  createErrorResponse, 
+  createPaginatedResponse 
+} from '@/lib/api/response-types';
+import { UserCreateSchema, UserUpdateSchema } from '@/lib/schemas/user';
+import { rateLimit } from '@/lib/api/rate-limiting';
+import { logAPIRequest } from '@/lib/logger';
+
+export async function GET(request: NextRequest) {
+  try {
+    // Rate limiting
+    const rateLimitResult = await rateLimit(request);
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        createErrorResponse('RATE_LIMIT_EXCEEDED', 'Too many requests'),
+        { status: 429, headers: rateLimitResult.headers }
+      );
+    }
+
+    // Parse query parameters
+    const { searchParams } = new URL(request.url);
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = Math.min(parseInt(searchParams.get('limit') || '20'), 100);
+    const search = searchParams.get('search') || '';
+    const sortBy = searchParams.get('sortBy') || 'createdAt';
+    const sortOrder = searchParams.get('sortOrder') || 'desc';
+
+    // Build query
+    const where = search ? {
+      OR: [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ],
+    } : {};
+
+    // Execute query with pagination
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { [sortBy]: sortOrder },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    // Log API request
+    logAPIRequest('GET', '/api/v1/users', { page, limit, search, total });
+
+    // Return paginated response
+    return NextResponse.json(
+      createPaginatedResponse(users, page, limit, total),
+      { 
+        status: 200,
+        headers: {
+          'X-Request-ID': generateRequestId(),
+          'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
+        },
+      }
+    );
+  } catch (error) {
+    logError('Failed to fetch users', { error: error.message });
+    return NextResponse.json(
+      createErrorResponse('INTERNAL_ERROR', 'Failed to fetch users'),
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    // Rate limiting
+    const rateLimitResult = await rateLimit(request);
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        createErrorResponse('RATE_LIMIT_EXCEEDED', 'Too many requests'),
+        { status: 429, headers: rateLimitResult.headers }
+      );
+    }
+
+    // Validate request body
+    const body = await request.json();
+    const validatedData = UserCreateSchema.parse(body);
+
+    // Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email: validatedData.email },
+    });
+
+    if (existingUser) {
+      return NextResponse.json(
+        createErrorResponse('USER_EXISTS', 'User with this email already exists'),
+        { status: 409 }
+      );
+    }
+
+    // Create user
+    const user = await prisma.user.create({
+      data: {
+        firstName: validatedData.firstName,
+        lastName: validatedData.lastName,
+        email: validatedData.email,
+        password: await hashPassword(validatedData.password),
+        preferences: validatedData.preferences,
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        createdAt: true,
+      },
+    });
+
+    // Log API request
+    logAPIRequest('POST', '/api/v1/users', { userId: user.id });
+
+    return NextResponse.json(
+      createSuccessResponse(user),
+      { 
+        status: 201,
+        headers: {
+          'X-Request-ID': generateRequestId(),
+          'X-RateLimit-Remaining': rateLimitResult.remaining.toString(),
+        },
+      }
+    );
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        createErrorResponse(
+          'VALIDATION_ERROR',
+          'Invalid request data',
+          error.errors.map(e => ({
+            field: e.path.join('.'),
+            message: e.message,
+          }))
+        ),
+        { status: 400 }
+      );
+    }
+
+    logError('Failed to create user', { error: error.message });
+    return NextResponse.json(
+      createErrorResponse('INTERNAL_ERROR', 'Failed to create user'),
+      { status: 500 }
+    );
+  }
+}
+```
+
+## GraphQL Patterns
+
+### GraphQL Schema Design
+```tsx
+// lib/graphql/schema.ts
+import { gql } from 'graphql-tag';
+
+export const typeDefs = gql`
+  type User {
+    id: ID!
+    firstName: String!
+    lastName: String!
+    email: String!
+    avatar: String
+    preferences: UserPreferences
+    posts: [Post!]!
+    createdAt: DateTime!
+    updatedAt: DateTime!
+  }
+
+  type UserPreferences {
+    language: Language!
+    theme: Theme!
+    notifications: NotificationSettings!
+  }
+
+  type Post {
+    id: ID!
+    title: String!
+    content: String!
+    author: User!
+    categories: [Category!]!
+    comments: [Comment!]!
+    likes: Int!
+    createdAt: DateTime!
+    updatedAt: DateTime!
+  }
+
+  type Category {
+    id: ID!
+    name: String!
+    slug: String!
+    posts: [Post!]!
+  }
+
+  type Comment {
+    id: ID!
+    content: String!
+    author: User!
+    post: Post!
+    createdAt: DateTime!
+  }
+
+  enum Language {
+    EN
+    ES
+    AR
+    ZH
+  }
+
+  enum Theme {
+    LIGHT
+    DARK
+    SYSTEM
+  }
+
+  type NotificationSettings {
+    email: Boolean!
+    push: Boolean!
+    sms: Boolean!
+  }
+
+  scalar DateTime
+
+  type Query {
+    users(
+      page: Int = 1
+      limit: Int = 20
+      search: String
+      sortBy: String = "createdAt"
+      sortOrder: SortOrder = DESC
+    ): UserConnection!
+    
+    user(id: ID!): User
+    posts(
+      page: Int = 1
+      limit: Int = 20
+      categoryId: ID
+      authorId: ID
+      search: String
+    ): PostConnection!
+    
+    post(id: ID!): Post
+    categories: [Category!]!
+  }
+
+  type Mutation {
+    createUser(input: CreateUserInput!): CreateUserPayload!
+    updateUser(id: ID!, input: UpdateUserInput!): UpdateUserPayload!
+    deleteUser(id: ID!): DeleteUserPayload!
+    
+    createPost(input: CreatePostInput!): CreatePostPayload!
+    updatePost(id: ID!, input: UpdatePostInput!): UpdatePostPayload!
+    deletePost(id: ID!): DeletePostPayload!
+    
+    createComment(input: CreateCommentInput!): CreateCommentPayload!
+    likePost(id: ID!): LikePostPayload!
+  }
+
+  input CreateUserInput {
+    firstName: String!
+    lastName: String!
+    email: String!
+    password: String!
+    preferences: UserPreferencesInput
+  }
+
+  input UpdateUserInput {
+    firstName: String
+    lastName: String
+    email: String
+    preferences: UserPreferencesInput
+  }
+
+  input UserPreferencesInput {
+    language: Language
+    theme: Theme
+    notifications: NotificationSettingsInput
+  }
+
+  input NotificationSettingsInput {
+    email: Boolean
+    push: Boolean
+    sms: Boolean
+  }
+
+  type UserConnection {
+    edges: [UserEdge!]!
+    pageInfo: PageInfo!
+    totalCount: Int!
+  }
+
+  type UserEdge {
+    node: User!
+    cursor: String!
+  }
+
+  type PostConnection {
+    edges: [PostEdge!]!
+    pageInfo: PageInfo!
+    totalCount: Int!
+  }
+
+  type PostEdge {
+    node: Post!
+    cursor: String!
+  }
+
+  type PageInfo {
+    hasNextPage: Boolean!
+    hasPreviousPage: Boolean!
+    startCursor: String
+    endCursor: String
+  }
+
+  type CreateUserPayload {
+    user: User
+    errors: [UserError!]
+  }
+
+  type UpdateUserPayload {
+    user: User
+    errors: [UserError!]
+  }
+
+  type DeleteUserPayload {
+    success: Boolean!
+    errors: [UserError!]
+  }
+
+  type UserError {
+    field: String!
+    message: String!
+  }
+
+  enum SortOrder {
+    ASC
+    DESC
+  }
+`;
+```
+
+### GraphQL Resolvers
+```tsx
+// lib/graphql/resolvers.ts
+import { prisma } from '@/lib/db';
+import { hashPassword, comparePassword } from '@/lib/auth';
+import { createJWT } from '@/lib/jwt';
+
+export const resolvers = {
+  Query: {
+    users: async (_, { page = 1, limit = 20, search, sortBy = 'createdAt', sortOrder = 'desc' }) => {
+      const where = search ? {
+        OR: [
+          { firstName: { contains: search, mode: 'insensitive' } },
+          { lastName: { contains: search, mode: 'insensitive' } },
+          { email: { contains: search, mode: 'insensitive' } },
+        ],
+      } : {};
+
+      const [users, totalCount] = await Promise.all([
+        prisma.user.findMany({
+          where,
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: { [sortBy]: sortOrder },
+          include: {
+            preferences: true,
+            _count: { select: { posts: true } },
+          },
+        }),
+        prisma.user.count({ where }),
+      ]);
+
+      const edges = users.map((user, index) => ({
+        node: user,
+        cursor: Buffer.from(`${user.id}:${(page - 1) * limit + index}`).toString('base64'),
+      }));
+
+      return {
+        edges,
+        pageInfo: {
+          hasNextPage: page * limit < totalCount,
+          hasPreviousPage: page > 1,
+          startCursor: edges[0]?.cursor,
+          endCursor: edges[edges.length - 1]?.cursor,
+        },
+        totalCount,
+      };
+    },
+
+    user: async (_, { id }) => {
+      return prisma.user.findUnique({
+        where: { id },
+        include: {
+          preferences: true,
+          posts: { include: { categories: true } },
+        },
+      });
+    },
+
+    posts: async (_, { page = 1, limit = 20, categoryId, authorId, search }) => {
+      const where = {
+        ...(categoryId && { categories: { some: { id: categoryId } } }),
+        ...(authorId && { authorId }),
+        ...(search && {
+          OR: [
+            { title: { contains: search, mode: 'insensitive' } },
+            { content: { contains: search, mode: 'insensitive' } },
+          ],
+        }),
+      };
+
+      const [posts, totalCount] = await Promise.all([
+        prisma.post.findMany({
+          where,
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: { createdAt: 'desc' },
+          include: {
+            author: { select: { id: true, firstName: true, lastName: true } },
+            categories: true,
+            _count: { select: { comments: true, likes: true } },
+          },
+        }),
+        prisma.post.count({ where }),
+      ]);
+
+      const edges = posts.map((post, index) => ({
+        node: post,
+        cursor: Buffer.from(`${post.id}:${(page - 1) * limit + index}`).toString('base64'),
+      }));
+
+      return {
+        edges,
+        pageInfo: {
+          hasNextPage: page * limit < totalCount,
+          hasPreviousPage: page > 1,
+          startCursor: edges[0]?.cursor,
+          endCursor: edges[edges.length - 1]?.cursor,
+        },
+        totalCount,
+      };
+    },
+  },
+
+  Mutation: {
+    createUser: async (_, { input }) => {
+      try {
+        // Check if user exists
+        const existingUser = await prisma.user.findUnique({
+          where: { email: input.email },
+        });
+
+        if (existingUser) {
+          return {
+            user: null,
+            errors: [{ field: 'email', message: 'User with this email already exists' }],
+          };
+        }
+
+        // Create user
+        const user = await prisma.user.create({
+          data: {
+            firstName: input.firstName,
+            lastName: input.lastName,
+            email: input.email,
+            password: await hashPassword(input.password),
+            preferences: input.preferences,
+          },
+          include: { preferences: true },
+        });
+
+        return { user, errors: [] };
+      } catch (error) {
+        return {
+          user: null,
+          errors: [{ field: 'general', message: 'Failed to create user' }],
+        };
+      }
+    },
+
+    updateUser: async (_, { id, input }) => {
+      try {
+        const user = await prisma.user.update({
+          where: { id },
+          data: input,
+          include: { preferences: true },
+        });
+
+        return { user, errors: [] };
+      } catch (error) {
+        return {
+          user: null,
+          errors: [{ field: 'general', message: 'Failed to update user' }],
+        };
+      }
+    },
+  },
+
+  User: {
+    posts: async (parent) => {
+      return prisma.post.findMany({
+        where: { authorId: parent.id },
+        orderBy: { createdAt: 'desc' },
+        include: { categories: true },
+      });
+    },
+  },
+
+  Post: {
+    author: async (parent) => {
+      return prisma.user.findUnique({
+        where: { id: parent.authorId },
+        select: { id: true, firstName: true, lastName: true, avatar: true },
+      });
+    },
+
+    categories: async (parent) => {
+      return prisma.category.findMany({
+        where: { posts: { some: { id: parent.id } } },
+      });
+    },
+
+    comments: async (parent) => {
+      return prisma.comment.findMany({
+        where: { postId: parent.id },
+        orderBy: { createdAt: 'asc' },
+        include: { author: { select: { id: true, firstName: true, lastName: true } } },
+      });
+    },
+  },
+};
+```
+
+## API Versioning Strategies
+
+### URL Versioning
+```tsx
+// ✅ Good: URL-based versioning
+export const API_VERSIONS = {
+  v1: '/api/v1',
+  v2: '/api/v2',
+  v3: '/api/v3',
+} as const;
+
+// app/api/v1/users/route.ts
+export async function GET(request: NextRequest) {
+  // v1 implementation
+}
+
+// app/api/v2/users/route.ts
+export async function GET(request: NextRequest) {
+  // v2 implementation with breaking changes
+}
+```
+
+### Header Versioning
+```tsx
+// lib/api/versioning.ts
+export const getAPIVersion = (request: NextRequest): string => {
+  const version = request.headers.get('X-API-Version') || '1';
+  return version;
+};
+
+export const validateAPIVersion = (version: string): boolean => {
+  const supportedVersions = ['1', '2', '3'];
+  return supportedVersions.includes(version);
+};
+
+// Middleware for version handling
+export const withVersioning = (handler: Function) => {
+  return async (request: NextRequest) => {
+    const version = getAPIVersion(request);
+    
+    if (!validateAPIVersion(version)) {
+      return NextResponse.json(
+        createErrorResponse('UNSUPPORTED_VERSION', `API version ${version} is not supported`),
+        { status: 400 }
+      );
+    }
+
+    // Add version to request context
+    request.headers.set('X-API-Version', version);
+    
+    return handler(request);
+  };
+};
+```
+
+## Rate Limiting
+
+### Rate Limiting Implementation
+```tsx
+// lib/api/rate-limiting.ts
+import { Redis } from '@upstash/redis';
+import { NextRequest } from 'next/server';
+
+const redis = new Redis({
+  url: process.env.UPSTASH_REDIS_REST_URL!,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
+});
+
+export interface RateLimitResult {
+  success: boolean;
+  remaining: number;
+  reset: number;
+  headers: Record<string, string>;
+}
+
+export const rateLimit = async (
+  request: NextRequest,
+  options: {
+    windowMs?: number;
+    max?: number;
+    keyGenerator?: (req: NextRequest) => string;
+  } = {}
+): Promise<RateLimitResult> => {
+  const {
+    windowMs = 15 * 60 * 1000, // 15 minutes
+    max = 100, // 100 requests per window
+    keyGenerator = (req) => req.ip || 'anonymous',
+  } = options;
+
+  const key = keyGenerator(request);
+  const now = Date.now();
+  const windowStart = now - windowMs;
+
+  try {
+    // Get current request count
+    const requests = await redis.zrangebyscore(key, windowStart, '+inf');
+    const currentCount = requests.length;
+
+    if (currentCount >= max) {
+      // Rate limit exceeded
+      const oldestRequest = requests[0];
+      const resetTime = parseInt(oldestRequest) + windowMs;
+
+      return {
+        success: false,
+        remaining: 0,
+        reset: resetTime,
+        headers: {
+          'X-RateLimit-Limit': max.toString(),
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': resetTime.toString(),
+          'Retry-After': Math.ceil((resetTime - now) / 1000).toString(),
+        },
+      };
+    }
+
+    // Add current request
+    await redis.zadd(key, now, now.toString());
+    await redis.expire(key, Math.ceil(windowMs / 1000));
+
+    const remaining = max - currentCount - 1;
+    const resetTime = now + windowMs;
+
+    return {
+      success: true,
+      remaining,
+      reset: resetTime,
+      headers: {
+        'X-RateLimit-Limit': max.toString(),
+        'X-RateLimit-Remaining': remaining.toString(),
+        'X-RateLimit-Reset': resetTime.toString(),
+      },
+    };
+  } catch (error) {
+    // If Redis fails, allow the request but log the error
+    console.error('Rate limiting failed:', error);
+    return {
+      success: true,
+      remaining: 999,
+      reset: now + windowMs,
+      headers: {},
+    };
+  }
+};
+
+// Different rate limits for different endpoints
+export const rateLimitConfig = {
+  auth: { windowMs: 15 * 60 * 1000, max: 5 },      // 5 attempts per 15 minutes
+  api: { windowMs: 15 * 60 * 1000, max: 100 },     // 100 requests per 15 minutes
+  upload: { windowMs: 60 * 60 * 1000, max: 10 },   // 10 uploads per hour
+  search: { windowMs: 1 * 60 * 1000, max: 30 },    // 30 searches per minute
+} as const;
+```
+
+## API Documentation
+
+### OpenAPI/Swagger Documentation
+```tsx
+// lib/api/openapi.ts
+import { OpenAPIV3 } from 'openapi-types';
+
+export const openApiSpec: OpenAPIV3.Document = {
+  openapi: '3.0.0',
+  info: {
+    title: 'Vanwyck API',
+    version: '1.0.0',
+    description: 'API for building amazing applications',
+    contact: {
+      name: 'Vanwyck Team',
+      email: 'api@vanwyck.com',
+    },
+  },
+  servers: [
+    {
+      url: 'https://api.vanwyck.com/v1',
+      description: 'Production server',
+    },
+    {
+      url: 'https://staging-api.vanwyck.com/v1',
+      description: 'Staging server',
+    },
+  ],
+  paths: {
+    '/users': {
+      get: {
+        summary: 'Get users',
+        description: 'Retrieve a paginated list of users',
+        parameters: [
+          {
+            name: 'page',
+            in: 'query',
+            description: 'Page number',
+            schema: { type: 'integer', minimum: 1, default: 1 },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            description: 'Number of items per page',
+            schema: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+          },
+          {
+            name: 'search',
+            in: 'query',
+            description: 'Search term for filtering users',
+            schema: { type: 'string' },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Successful response',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/UserConnection',
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Bad request',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+          '429': {
+            description: 'Too many requests',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+        },
+      },
+      post: {
+        summary: 'Create user',
+        description: 'Create a new user account',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                $ref: '#/components/schemas/CreateUserRequest',
+              },
+            },
+          },
+        },
+        responses: {
+          '201': {
+            description: 'User created successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/UserResponse',
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Validation error',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ValidationErrorResponse',
+                },
+              },
+            },
+          },
+          '409': {
+            description: 'User already exists',
+            content: {
+              'application/json': {
+                schema: {
+                  $ref: '#/components/schemas/ErrorResponse',
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  components: {
+    schemas: {
+      User: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          firstName: { type: 'string', minLength: 1, maxLength: 50 },
+          lastName: { type: 'string', minLength: 1, maxLength: 50 },
+          email: { type: 'string', format: 'email' },
+          createdAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+        },
+        required: ['id', 'firstName', 'lastName', 'email', 'createdAt', 'updatedAt'],
+      },
+      CreateUserRequest: {
+        type: 'object',
+        properties: {
+          firstName: { type: 'string', minLength: 1, maxLength: 50 },
+          lastName: { type: 'string', minLength: 1, maxLength: 50 },
+          email: { type: 'string', format: 'email' },
+          password: { type: 'string', minLength: 8 },
+        },
+        required: ['firstName', 'lastName', 'email', 'password'],
+      },
+      UserConnection: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean' },
+          data: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/User' },
+          },
+          meta: {
+            $ref: '#/components/schemas/PaginationMeta',
+          },
+        },
+        required: ['success', 'data', 'meta'],
+      },
+      PaginationMeta: {
+        type: 'object',
+        properties: {
+          timestamp: { type: 'string', format: 'date-time' },
+          requestId: { type: 'string' },
+          pagination: {
+            type: 'object',
+            properties: {
+              page: { type: 'integer', minimum: 1 },
+              limit: { type: 'integer', minimum: 1 },
+              total: { type: 'integer', minimum: 0 },
+              totalPages: { type: 'integer', minimum: 0 },
+            },
+            required: ['page', 'limit', 'total', 'totalPages'],
+          },
+        },
+        required: ['timestamp', 'requestId', 'pagination'],
+      },
+      ErrorResponse: {
+        type: 'object',
+        properties: {
+          success: { type: 'boolean' },
+          error: {
+            type: 'object',
+            properties: {
+              code: { type: 'string' },
+              message: { type: 'string' },
+              details: { type: 'object' },
+            },
+            required: ['code', 'message'],
+          },
+          meta: {
+            type: 'object',
+            properties: {
+              timestamp: { type: 'string', format: 'date-time' },
+              requestId: { type: 'string' },
+            },
+            required: ['timestamp', 'requestId'],
+          },
+        },
+        required: ['success', 'error', 'meta'],
+      },
+    },
+    securitySchemes: {
+      BearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+      },
+      ApiKeyAuth: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-API-Key',
+      },
+    },
+  },
+  security: [
+    { BearerAuth: [] },
+    { ApiKeyAuth: [] },
+  ],
+};
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Use consistent RESTful resource naming
+- Implement proper HTTP status codes
+- Standardize API response format
+- Add comprehensive error handling
+- Implement rate limiting for all endpoints
+- Version your APIs properly
+- Document your APIs with OpenAPI/Swagger
+- Use proper authentication and authorization
+- Implement request/response logging
+- Add request ID tracking for debugging
+
+### ❌ Don'ts
+- Don't use inconsistent naming conventions
+- Don't expose internal error details
+- Don't skip input validation
+- Don't forget about rate limiting
+- Don't use GET for mutations
+- Don't ignore API versioning
+- Don't skip API documentation
+- Don't use insecure authentication methods
+
+### 🔧 Implementation Checklist
+- [ ] Design RESTful API structure
+- [ ] Implement standard response format
+- [ ] Add proper error handling
+- [ ] Set up rate limiting
+- [ ] Implement API versioning
+- [ ] Create OpenAPI documentation
+- [ ] Add request/response logging
+- [ ] Implement authentication middleware
+- [ ] Add request ID tracking
+- [ ] Test API endpoints thoroughly
+- [ ] Set up API monitoring
+- [ ] Document rate limits and quotas
+description:
+globs:
+alwaysApply: false
+---

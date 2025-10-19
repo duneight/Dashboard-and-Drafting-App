@@ -1,0 +1,695 @@
+# Error Handling & Logging Best Practices
+
+## Error Handling Strategy
+
+### Centralized Error Handling
+```tsx
+// lib/errors.ts
+export class AppError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number = 500,
+    public code?: string,
+    public isOperational: boolean = true
+  ) {
+    super(message);
+    this.name = 'AppError';
+    Error.captureStackTrace(this, this.constructor);
+  }
+
+  static isOperational(error: Error): boolean {
+    if (error instanceof AppError) {
+      return error.isOperational;
+    }
+    return false;
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message: string, public field?: string) {
+    super(message, 400, 'VALIDATION_ERROR');
+    this.name = 'ValidationError';
+  }
+}
+
+export class AuthenticationError extends AppError {
+  constructor(message: string = 'Authentication required') {
+    super(message, 401, 'AUTHENTICATION_ERROR');
+    this.name = 'AuthenticationError';
+  }
+}
+
+export class AuthorizationError extends AppError {
+  constructor(message: string = 'Insufficient permissions') {
+    super(message, 403, 'AUTHORIZATION_ERROR');
+    this.name = 'AuthorizationError';
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(resource: string) {
+    super(`${resource} not found`, 404, 'NOT_FOUND_ERROR');
+    this.name = 'NotFoundError';
+  }
+}
+
+export class ConflictError extends AppError {
+  constructor(message: string) {
+    super(message, 409, 'CONFLICT_ERROR');
+    this.name = 'ConflictError';
+  }
+}
+```
+
+### Error Boundary Component
+```tsx
+// components/ErrorBoundary.tsx
+"use client";
+import { Component, ReactNode } from 'react';
+import { logError } from '@/lib/logger';
+
+interface Props {
+  children: ReactNode;
+  fallback?: ReactNode;
+  onError?: (error: Error, errorInfo: any) => void;
+}
+
+interface State {
+  hasError: boolean;
+  error?: Error;
+}
+
+export class ErrorBoundary extends Component<Props, State> {
+  constructor(props: Props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): State {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: any) {
+    // Log error to monitoring service
+    logError('ErrorBoundary caught error', {
+      error: error.message,
+      stack: error.stack,
+      componentStack: errorInfo.componentStack,
+    });
+
+    // Call custom error handler
+    this.props.onError?.(error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      if (this.props.fallback) {
+        return this.props.fallback;
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="text-center">
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">
+              Something went wrong
+            </h1>
+            <p className="text-gray-600 mb-6">
+              We're sorry, but something unexpected happened.
+            </p>
+            <button
+              onClick={() => this.setState({ hasError: false })}
+              className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+```
+
+### API Error Handling
+```tsx
+// lib/api.ts
+export async function apiRequest<T>(
+  url: string,
+  options: RequestInit = {}
+): Promise<T> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      
+      switch (response.status) {
+        case 400:
+          throw new ValidationError(errorData.message || 'Invalid request');
+        case 401:
+          throw new AuthenticationError(errorData.message || 'Authentication required');
+        case 403:
+          throw new AuthorizationError(errorData.message || 'Insufficient permissions');
+        case 404:
+          throw new NotFoundError(errorData.resource || 'Resource');
+        case 409:
+          throw new ConflictError(errorData.message || 'Resource conflict');
+        case 422:
+          throw new ValidationError(errorData.message || 'Validation failed');
+        case 429:
+          throw new AppError('Too many requests', 429, 'RATE_LIMIT_ERROR');
+        case 500:
+          throw new AppError('Internal server error', 500, 'INTERNAL_ERROR');
+        default:
+          throw new AppError(
+            errorData.message || 'An unexpected error occurred',
+            response.status
+          );
+      }
+    }
+
+    return response.json();
+  } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    
+    // Network or other unexpected errors
+    logError('API request failed', {
+      url,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    
+    throw new AppError(
+      'Network error. Please check your connection and try again.',
+      0,
+      'NETWORK_ERROR'
+    );
+  }
+}
+```
+
+## Logging System
+
+### Structured Logging
+```tsx
+// lib/logger.ts
+export enum LogLevel {
+  DEBUG = 0,
+  INFO = 1,
+  WARN = 2,
+  ERROR = 3,
+  FATAL = 4,
+}
+
+interface LogContext {
+  [key: string]: any;
+}
+
+interface LogEntry {
+  timestamp: string;
+  level: LogLevel;
+  message: string;
+  context?: LogContext;
+  error?: Error;
+  userId?: string;
+  requestId?: string;
+  userAgent?: string;
+  ip?: string;
+}
+
+class Logger {
+  private logLevel: LogLevel;
+  private isDevelopment: boolean;
+
+  constructor() {
+    this.logLevel = this.getLogLevel();
+    this.isDevelopment = process.env.NODE_ENV === 'development';
+  }
+
+  private getLogLevel(): LogLevel {
+    const level = process.env.LOG_LEVEL?.toUpperCase();
+    switch (level) {
+      case 'DEBUG': return LogLevel.DEBUG;
+      case 'INFO': return LogLevel.INFO;
+      case 'WARN': return LogLevel.WARN;
+      case 'ERROR': return LogLevel.ERROR;
+      case 'FATAL': return LogLevel.FATAL;
+      default: return this.isDevelopment ? LogLevel.DEBUG : LogLevel.INFO;
+    }
+  }
+
+  private shouldLog(level: LogLevel): boolean {
+    return level >= this.logLevel;
+  }
+
+  private formatLog(entry: LogEntry): string {
+    const timestamp = new Date(entry.timestamp).toISOString();
+    const level = LogLevel[entry.level];
+    const context = entry.context ? ` ${JSON.stringify(entry.context)}` : '';
+    const error = entry.error ? `\n${entry.error.stack}` : '';
+    
+    return `[${timestamp}] ${level}: ${entry.message}${context}${error}`;
+  }
+
+  private async sendToExternalService(entry: LogEntry): Promise<void> {
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        // Send to external logging service (e.g., DataDog, LogRocket)
+        await fetch(process.env.LOG_ENDPOINT!, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(entry),
+        });
+      } catch (error) {
+        // Fallback to console in production if external service fails
+        console.error('Failed to send log to external service:', error);
+      }
+    }
+  }
+
+  private log(level: LogLevel, message: string, context?: LogContext, error?: Error): void {
+    if (!this.shouldLog(level)) return;
+
+    const entry: LogEntry = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      context,
+      error,
+      userId: this.getCurrentUserId(),
+      requestId: this.getRequestId(),
+      userAgent: typeof window !== 'undefined' ? window.navigator.userAgent : undefined,
+    };
+
+    // Format and output log
+    const formattedLog = this.formatLog(entry);
+    
+    if (this.isDevelopment) {
+      // Development: colorful console output
+      this.logToConsole(level, formattedLog);
+    } else {
+      // Production: structured logging
+      console.log(JSON.stringify(entry));
+    }
+
+    // Send to external service
+    this.sendToExternalService(entry);
+  }
+
+  private logToConsole(level: LogLevel, message: string): void {
+    const colors = {
+      [LogLevel.DEBUG]: 'color: #6B7280',
+      [LogLevel.INFO]: 'color: #3B82F6',
+      [LogLevel.WARN]: 'color: #F59E0B',
+      [LogLevel.ERROR]: 'color: #EF4444',
+      [LogLevel.FATAL]: 'color: #DC2626; font-weight: bold',
+    };
+
+    console.log(`%c${message}`, colors[level]);
+  }
+
+  private getCurrentUserId(): string | undefined {
+    // Extract from auth context or session
+    if (typeof window !== 'undefined') {
+      // Client-side: get from auth context
+      return window.__AUTH_CONTEXT__?.userId;
+    }
+    // Server-side: get from request context
+    return undefined;
+  }
+
+  private getRequestId(): string | undefined {
+    // Extract from request headers or generate
+    if (typeof window !== 'undefined') {
+      return window.__REQUEST_ID__;
+    }
+    return undefined;
+  }
+
+  debug(message: string, context?: LogContext): void {
+    this.log(LogLevel.DEBUG, message, context);
+  }
+
+  info(message: string, context?: LogContext): void {
+    this.log(LogLevel.INFO, message, context);
+  }
+
+  warn(message: string, context?: LogContext): void {
+    this.log(LogLevel.WARN, message, context);
+  }
+
+  error(message: string, context?: LogContext, error?: Error): void {
+    this.log(LogLevel.ERROR, message, context, error);
+  }
+
+  fatal(message: string, context?: LogContext, error?: Error): void {
+    this.log(LogLevel.FATAL, message, context, error);
+  }
+}
+
+export const logger = new Logger();
+
+// Convenience functions
+export const logDebug = (message: string, context?: LogContext) => logger.debug(message, context);
+export const logInfo = (message: string, context?: LogContext) => logger.info(message, context);
+export const logWarn = (message: string, context?: LogContext) => logger.warn(message, context);
+export const logError = (message: string, context?: LogContext, error?: Error) => logger.error(message, context, error);
+export const logFatal = (message: string, context?: LogContext, error?: Error) => logger.fatal(message, context, error);
+```
+
+### Request Logging Middleware
+```tsx
+// middleware.ts
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+import { logger } from '@/lib/logger';
+
+export async function middleware(request: NextRequest) {
+  const startTime = Date.now();
+  const requestId = crypto.randomUUID();
+  
+  // Add request ID to headers
+  const response = NextResponse.next();
+  response.headers.set('X-Request-ID', requestId);
+  
+  // Log request
+  logger.info('Incoming request', {
+    method: request.method,
+    url: request.url,
+    userAgent: request.headers.get('user-agent'),
+    ip: request.ip || request.headers.get('x-forwarded-for'),
+    requestId,
+  });
+
+  try {
+    // Process request
+    const result = await NextResponse.next();
+    
+    // Log response
+    const duration = Date.now() - startTime;
+    logger.info('Request completed', {
+      method: request.method,
+      url: request.url,
+      status: result.status,
+      duration: `${duration}ms`,
+      requestId,
+    });
+    
+    return result;
+  } catch (error) {
+    // Log error
+    const duration = Date.now() - startTime;
+    logger.error('Request failed', {
+      method: request.method,
+      url: request.url,
+      duration: `${duration}ms`,
+      requestId,
+    }, error as Error);
+    
+    throw error;
+  }
+}
+```
+
+## Error Recovery Strategies
+
+### Retry Logic
+```tsx
+// lib/retry.ts
+interface RetryOptions {
+  maxAttempts: number;
+  delay: number;
+  backoff: 'fixed' | 'exponential';
+  shouldRetry?: (error: Error) => boolean;
+}
+
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions = { maxAttempts: 3, delay: 1000, backoff: 'exponential' }
+): Promise<T> {
+  let lastError: Error;
+  
+  for (let attempt = 1; attempt <= options.maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      
+      // Check if we should retry this error
+      if (options.shouldRetry && !options.shouldRetry(lastError)) {
+        throw lastError;
+      }
+      
+      // Don't retry on last attempt
+      if (attempt === options.maxAttempts) {
+        break;
+      }
+      
+      // Calculate delay
+      const delay = options.backoff === 'exponential' 
+        ? options.delay * Math.pow(2, attempt - 1)
+        : options.delay;
+      
+      // Wait before retry
+      await new Promise(resolve => setTimeout(resolve, delay));
+      
+      logger.warn(`Retry attempt ${attempt} failed, retrying in ${delay}ms`, {
+        error: lastError.message,
+        attempt,
+        maxAttempts: options.maxAttempts,
+      });
+    }
+  }
+  
+  throw lastError!;
+}
+
+// Usage example
+export async function fetchWithRetry(url: string): Promise<Response> {
+  return withRetry(
+    () => fetch(url),
+    {
+      maxAttempts: 3,
+      delay: 1000,
+      backoff: 'exponential',
+      shouldRetry: (error) => {
+        // Only retry on network errors or 5xx responses
+        return error.name === 'TypeError' || 
+               (error as any).status >= 500;
+      },
+    }
+  );
+}
+```
+
+### Circuit Breaker Pattern
+```tsx
+// lib/circuitBreaker.ts
+enum CircuitState {
+  CLOSED = 'CLOSED',
+  OPEN = 'OPEN',
+  HALF_OPEN = 'HALF_OPEN',
+}
+
+interface CircuitBreakerOptions {
+  failureThreshold: number;
+  recoveryTimeout: number;
+  expectedResponseTime: number;
+}
+
+export class CircuitBreaker {
+  private state: CircuitState = CircuitState.CLOSED;
+  private failureCount: number = 0;
+  private lastFailureTime: number = 0;
+  private successCount: number = 0;
+  
+  constructor(
+    private options: CircuitBreakerOptions = {
+      failureThreshold: 5,
+      recoveryTimeout: 60000,
+      expectedResponseTime: 5000,
+    }
+  ) {}
+
+  async execute<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.state === CircuitState.OPEN) {
+      if (Date.now() - this.lastFailureTime > this.options.recoveryTimeout) {
+        this.state = CircuitState.HALF_OPEN;
+        logger.info('Circuit breaker transitioning to HALF_OPEN');
+      } else {
+        throw new AppError(
+          'Service temporarily unavailable',
+          503,
+          'CIRCUIT_BREAKER_OPEN'
+        );
+      }
+    }
+
+    try {
+      const startTime = Date.now();
+      const result = await fn();
+      const duration = Date.now() - startTime;
+      
+      this.onSuccess(duration);
+      return result;
+    } catch (error) {
+      this.onFailure();
+      throw error;
+    }
+  }
+
+  private onSuccess(duration: number): void {
+    this.failureCount = 0;
+    this.successCount++;
+    
+    if (this.state === CircuitState.HALF_OPEN) {
+      if (this.successCount >= Math.ceil(this.options.failureThreshold / 2)) {
+        this.state = CircuitState.CLOSED;
+        this.successCount = 0;
+        logger.info('Circuit breaker transitioning to CLOSED');
+      }
+    }
+  }
+
+  private onFailure(): void {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+    
+    if (this.failureCount >= this.options.failureThreshold) {
+      this.state = CircuitState.OPEN;
+      logger.warn('Circuit breaker transitioning to OPEN', {
+        failureCount: this.failureCount,
+        threshold: this.options.failureThreshold,
+      });
+    }
+  }
+
+  getState(): CircuitState {
+    return this.state;
+  }
+}
+```
+
+## Error Monitoring Integration
+
+### Sentry Integration
+```tsx
+// lib/monitoring.ts
+import * as Sentry from '@sentry/nextjs';
+
+export function initializeMonitoring(): void {
+  if (process.env.NODE_ENV === 'production') {
+    Sentry.init({
+      dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+      environment: process.env.VERCEL_ENV || 'development',
+      tracesSampleRate: 0.1,
+      integrations: [
+        new Sentry.BrowserTracing(),
+        new Sentry.Replay(),
+      ],
+    });
+  }
+}
+
+export function captureError(error: Error, context?: Record<string, any>): void {
+  if (process.env.NODE_ENV === 'production') {
+    Sentry.captureException(error, {
+      extra: context,
+    });
+  }
+  
+  // Also log locally
+  logger.error('Error captured by monitoring', context, error);
+}
+
+export function setUserContext(userId: string, email?: string): void {
+  if (process.env.NODE_ENV === 'production') {
+    Sentry.setUser({
+      id: userId,
+      email,
+    });
+  }
+}
+```
+
+### Health Checks
+```tsx
+// app/api/health/route.ts
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db';
+import { logger } from '@/lib/logger';
+
+export async function GET() {
+  const startTime = Date.now();
+  const checks: Record<string, { status: 'healthy' | 'unhealthy'; duration: number }> = {};
+  
+  try {
+    // Database health check
+    const dbStart = Date.now();
+    await prisma.$queryRaw`SELECT 1`;
+    const dbDuration = Date.now() - dbStart;
+    checks.database = { status: 'healthy', duration: dbDuration };
+    
+    // External service health checks
+    const externalStart = Date.now();
+    const supabaseResponse = await fetch(process.env.NEXT_PUBLIC_SUPABASE_URL!);
+    const externalDuration = Date.now() - externalStart;
+    checks.external_services = { 
+      status: supabaseResponse.ok ? 'healthy' : 'unhealthy',
+      duration: externalDuration
+    };
+    
+    const totalDuration = Date.now() - startTime;
+    const overallStatus = Object.values(checks).every(check => check.status === 'healthy') 
+      ? 'healthy' 
+      : 'unhealthy';
+    
+    logger.info('Health check completed', {
+      status: overallStatus,
+      duration: totalDuration,
+      checks,
+    });
+    
+    return NextResponse.json({
+      status: overallStatus,
+      timestamp: new Date().toISOString(),
+      duration: totalDuration,
+      checks,
+    }, {
+      status: overallStatus === 'healthy' ? 200 : 503,
+    });
+    
+  } catch (error) {
+    logger.error('Health check failed', { error: error instanceof Error ? error.message : 'Unknown error' });
+    
+    return NextResponse.json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      error: 'Health check failed',
+    }, { status: 503 });
+  }
+}
+```
+
+This comprehensive error handling and logging system provides:
+- Centralized error types and handling
+- Structured logging with multiple levels
+- Error boundaries for React components
+- API error handling with proper HTTP status codes
+- Retry logic and circuit breaker patterns
+- Integration with monitoring services
+- Health checks for system monitoring
+- Request/response logging middleware
+description:
+globs:
+alwaysApply: false
+---

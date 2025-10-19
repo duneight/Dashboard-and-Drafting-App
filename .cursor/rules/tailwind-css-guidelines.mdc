@@ -1,0 +1,100 @@
+# Tailwind CSS Guidelines
+
+## Design System Approach
+- Use Tailwind's built-in design tokens
+- Create consistent spacing, colors, and typography
+- Prefer utility classes over custom CSS
+- Use CSS variables for theme customization
+
+## Color Palette
+```tsx
+// ✅ Good: Semantic color usage
+<button className="bg-blue-600 hover:bg-blue-700 text-white">
+  Primary Button
+</button>
+
+<button className="bg-gray-200 hover:bg-gray-300 text-gray-800">
+  Secondary Button
+</button>
+
+// ✅ Good: Consistent color scale
+<div className="bg-gray-50 border border-gray-200 text-gray-900">
+  Card content
+</div>
+```
+
+## Spacing & Layout
+```tsx
+// ✅ Good: Consistent spacing scale
+<div className="p-6 space-y-4">
+  <h1 className="text-2xl font-bold">Title</h1>
+  <p className="text-gray-600">Description</p>
+</div>
+
+// ✅ Good: Responsive design
+<div className="p-4 md:p-6 lg:p-8">
+  Responsive padding
+</div>
+```
+
+## Component Patterns
+```tsx
+// ✅ Good: Reusable button component
+export function Button({ 
+  variant = 'primary', 
+  children, 
+  ...props 
+}: ButtonProps) {
+  const baseClasses = "px-4 py-2 rounded-md font-medium transition-colors";
+  const variants = {
+    primary: "bg-blue-600 hover:bg-blue-700 text-white",
+    secondary: "bg-gray-200 hover:bg-gray-300 text-gray-800",
+    outline: "border border-gray-300 hover:bg-gray-50 text-gray-700"
+  };
+  
+  return (
+    <button 
+      className={`${baseClasses} ${variants[variant]}`} 
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+```
+
+## Responsive Design
+- Mobile-first approach
+- Use `sm:`, `md:`, `lg:`, `xl:` prefixes
+- Test on multiple screen sizes
+- Use container queries when needed
+
+## Dark Mode
+```tsx
+// ✅ Good: Dark mode support
+<div className="bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
+  <h1 className="text-gray-800 dark:text-gray-100">
+    Adaptive content
+  </h1>
+</div>
+```
+
+## Custom CSS (When Needed)
+```css
+/* tailwind.config.js or globals.css */
+@layer components {
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md;
+  }
+}
+```
+
+## Accessibility
+- Ensure sufficient color contrast
+- Use focus states: `focus:ring-2 focus:ring-blue-500`
+- Support keyboard navigation
+- Test with screen readers
+description:
+globs:
+alwaysApply: false
+---

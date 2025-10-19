@@ -1,0 +1,12 @@
+# Fantasy NHL Stats - Robots.txt
+# Allow all crawlers to access the site
+
+User-agent: *
+Allow: /
+
+# Disallow admin and API routes from being indexed
+Disallow: /api/
+
+# Sitemap location (update with your actual domain)
+Sitemap: https://your-domain.com/sitemap.xml
+

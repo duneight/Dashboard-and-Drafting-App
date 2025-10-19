@@ -1,0 +1,60 @@
+# Project Architecture & Setup
+
+## Stack Overview
+- **Frontend**: Next.js 14+ (App Router) with TypeScript
+- **Styling**: Tailwind CSS with custom design system
+- **Backend**: Supabase (Postgres + Auth + Storage)
+- **Database**: Prisma ORM for type-safe database operations
+- **Deployment**: Vercel with custom domains
+- **Monorepo**: Turborepo for managing multiple apps
+
+## Project Structure
+```
+my-stack/
+├── apps/
+│   ├── website/          # Marketing site (mysite.com)
+│   │   ├── app/         # Next.js App Router
+│   │   ├── components/  # Site-specific components
+│   │   └── content/     # MDX content for marketing
+│   └── myapp/           # Custom app (myapp.mysite.com)
+│       ├── app/         # Next.js App Router
+│       ├── components/  # App-specific components
+│       └── lib/         # App utilities
+├── packages/
+│   ├── ui/              # Shared UI component library
+│   ├── config/          # Shared configs (eslint, tsconfig, tailwind)
+│   ├── database/        # Shared database schemas & migrations
+│   └── auth/            # Shared authentication utilities
+├── .cursor/rules/       # Cursor rules (this file)
+├── turbo.json           # Turborepo configuration
+├── package.json         # Root package.json with workspaces
+└── .env.example         # Environment template
+```
+
+## Key Principles
+- Use App Router (not Pages Router) with React 18+ features
+- Server Components by default, Client Components only when needed
+- TypeScript strict mode with `noUncheckedIndexedAccess: true`
+- Tailwind CSS v3.4+ with CSS variables for theming
+- Prisma with edge-compatible client for Vercel deployment
+- Supabase Auth with PKCE flow (more secure than magic links)
+- Environment variables validation with Zod
+- React Server Components streaming and Suspense boundaries
+- Edge Runtime for API routes when possible
+- Bun/Node.js 20+ for development (faster than npm)
+
+## File Naming Conventions
+- Components: PascalCase (e.g., `UserProfile.tsx`)
+- Pages: kebab-case (e.g., `user-profile/page.tsx`)
+- Utilities: camelCase (e.g., `formatDate.ts`)
+- Constants: UPPER_SNAKE_CASE (e.g., `API_ENDPOINTS.ts`)
+
+## Import Aliases
+- Use `@/` for app-level imports
+- Use `@/lib/` for utilities
+- Use `@/components/` for React components
+- Use `@/types/` for TypeScript types
+description:
+globs:
+alwaysApply: false
+---

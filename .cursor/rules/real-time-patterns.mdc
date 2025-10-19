@@ -1,0 +1,1152 @@
+# Real-Time Features & WebSocket Patterns
+
+## Real-Time Strategy
+
+### Core Principles
+```tsx
+// ✅ Good: Real-time principles
+// - WebSocket for bidirectional communication
+// - Server-Sent Events (SSE) for one-way updates
+// - Real-time collaboration with conflict resolution
+// - Live updates and notifications
+// - Connection management and reconnection
+// - Message queuing and delivery guarantees
+```
+
+### Real-Time Architecture
+```tsx
+// ✅ Good: Layered real-time architecture
+type RealTimeArchitecture = {
+  transport: 'websocket' | 'sse' | 'polling' | 'hybrid';
+  protocol: 'json' | 'protobuf' | 'messagepack';
+  scaling: 'single-server' | 'redis-pubsub' | 'kafka';
+  reliability: 'at-least-once' | 'exactly-once' | 'best-effort';
+};
+
+type RealTimeFeature = {
+  chat: 'websocket';
+  notifications: 'sse';
+  collaboration: 'websocket';
+  liveData: 'hybrid';
+};
+```
+
+## WebSocket Implementation
+
+### WebSocket Server Setup
+```tsx
+// lib/websocket/server.ts
+import { WebSocketServer, WebSocket } from 'ws';
+import { parse } from 'url';
+import { verifyToken } from '@/lib/auth/jwt';
+import { rateLimit } from '@/lib/api/rate-limiting';
+
+export interface WebSocketMessage {
+  type: string;
+  payload: any;
+  timestamp: number;
+  messageId: string;
+}
+
+export interface WebSocketClient {
+  id: string;
+  userId?: string;
+  ws: WebSocket;
+  subscriptions: Set<string>;
+  lastPing: number;
+  isAlive: boolean;
+}
+
+export class WebSocketServerManager {
+  private wss: WebSocketServer;
+  private clients: Map<string, WebSocketClient> = new Map();
+  private rooms: Map<string, Set<string>> = new Map();
+  private messageHandlers: Map<string, Function> = new Map();
+
+  constructor(server: any) {
+    this.wss = new WebSocketServer({ server });
+    this.setupEventHandlers();
+    this.setupMessageHandlers();
+    this.startHeartbeat();
+  }
+
+  private setupEventHandlers() {
+    this.wss.on('connection', async (ws: WebSocket, request: any) => {
+      try {
+        // Authenticate connection
+        const token = this.extractToken(request);
+        if (!token) {
+          ws.close(1008, 'Authentication required');
+          return;
+        }
+
+        const payload = await verifyToken(token, 'access');
+        const clientId = this.generateClientId();
+
+        const client: WebSocketClient = {
+          id: clientId,
+          userId: payload.userId,
+          ws,
+          subscriptions: new Set(),
+          lastPing: Date.now(),
+          isAlive: true,
+        };
+
+        this.clients.set(clientId, client);
+
+        // Send welcome message
+        this.sendToClient(clientId, {
+          type: 'connection:established',
+          payload: { clientId, userId: payload.userId },
+          timestamp: Date.now(),
+          messageId: this.generateMessageId(),
+        });
+
+        // Setup client event handlers
+        this.setupClientHandlers(client);
+
+        console.log(`Client connected: ${clientId} (User: ${payload.userId})`);
+      } catch (error) {
+        console.error('WebSocket connection error:', error);
+        ws.close(1008, 'Authentication failed');
+      }
+    });
+  }
+
+  private setupClientHandlers(client: WebSocketClient) {
+    client.ws.on('message', async (data: Buffer) => {
+      try {
+        const message: WebSocketMessage = JSON.parse(data.toString());
+        await this.handleMessage(client, message);
+      } catch (error) {
+        console.error('Message handling error:', error);
+        this.sendToClient(client.id, {
+          type: 'error',
+          payload: { message: 'Invalid message format' },
+          timestamp: Date.now(),
+          messageId: this.generateMessageId(),
+        });
+      }
+    });
+
+    client.ws.on('close', () => {
+      this.handleClientDisconnect(client.id);
+    });
+
+    client.ws.on('pong', () => {
+      client.isAlive = true;
+      client.lastPing = Date.now();
+    });
+
+    client.ws.on('error', (error) => {
+      console.error(`WebSocket error for client ${client.id}:`, error);
+      this.handleClientDisconnect(client.id);
+    });
+  }
+
+  private async handleMessage(client: WebSocketClient, message: WebSocketMessage) {
+    const handler = this.messageHandlers.get(message.type);
+    
+    if (handler) {
+      try {
+        await handler(client, message.payload);
+      } catch (error) {
+        console.error(`Error handling message ${message.type}:`, error);
+        this.sendToClient(client.id, {
+          type: 'error',
+          payload: { message: 'Message processing failed' },
+          timestamp: Date.now(),
+          messageId: this.generateMessageId(),
+        });
+      }
+    } else {
+      console.warn(`No handler for message type: ${message.type}`);
+    }
+  }
+
+  private setupMessageHandlers() {
+    // Subscribe to room
+    this.messageHandlers.set('room:subscribe', (client: WebSocketClient, payload: { roomId: string }) => {
+      this.subscribeToRoom(client.id, payload.roomId);
+    });
+
+    // Unsubscribe from room
+    this.messageHandlers.set('room:unsubscribe', (client: WebSocketClient, payload: { roomId: string }) => {
+      this.unsubscribeFromRoom(client.id, payload.roomId);
+    });
+
+    // Send message to room
+    this.messageHandlers.set('room:message', async (client: WebSocketClient, payload: { roomId: string; message: string }) => {
+      await this.broadcastToRoom(payload.roomId, {
+        type: 'room:message',
+        payload: {
+          roomId: payload.roomId,
+          message: payload.message,
+          userId: client.userId,
+          timestamp: Date.now(),
+        },
+        timestamp: Date.now(),
+        messageId: this.generateMessageId(),
+      });
+    });
+
+    // Typing indicator
+    this.messageHandlers.set('room:typing', (client: WebSocketClient, payload: { roomId: string; isTyping: boolean }) => {
+      this.broadcastToRoom(payload.roomId, {
+        type: 'room:typing',
+        payload: {
+          roomId: payload.roomId,
+          userId: client.userId,
+          isTyping: payload.isTyping,
+          timestamp: Date.now(),
+        },
+        timestamp: Date.now(),
+        messageId: this.generateMessageId(),
+      });
+    });
+
+    // Ping response
+    this.messageHandlers.set('ping', (client: WebSocketClient) => {
+      this.sendToClient(client.id, {
+        type: 'pong',
+        payload: { timestamp: Date.now() },
+        timestamp: Date.now(),
+        messageId: this.generateMessageId(),
+      });
+    });
+  }
+
+  // Subscribe client to room
+  private subscribeToRoom(clientId: string, roomId: string) {
+    const client = this.clients.get(clientId);
+    if (!client) return;
+
+    client.subscriptions.add(roomId);
+
+    if (!this.rooms.has(roomId)) {
+      this.rooms.set(roomId, new Set());
+    }
+    this.rooms.get(roomId)!.add(clientId);
+
+    // Send confirmation
+    this.sendToClient(clientId, {
+      type: 'room:subscribed',
+      payload: { roomId },
+      timestamp: Date.now(),
+      messageId: this.generateMessageId(),
+    });
+  }
+
+  // Unsubscribe client from room
+  private unsubscribeFromRoom(clientId: string, roomId: string) {
+    const client = this.clients.get(clientId);
+    if (!client) return;
+
+    client.subscriptions.delete(roomId);
+
+    const room = this.rooms.get(roomId);
+    if (room) {
+      room.delete(clientId);
+      if (room.size === 0) {
+        this.rooms.delete(roomId);
+      }
+    }
+
+    // Send confirmation
+    this.sendToClient(clientId, {
+      type: 'room:unsubscribed',
+      payload: { roomId },
+      timestamp: Date.now(),
+      messageId: this.generateMessageId(),
+    });
+  }
+
+  // Broadcast message to all clients in a room
+  private async broadcastToRoom(roomId: string, message: WebSocketMessage) {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+
+    const failedClients: string[] = [];
+
+    for (const clientId of room) {
+      try {
+        await this.sendToClient(clientId, message);
+      } catch (error) {
+        console.error(`Failed to send message to client ${clientId}:`, error);
+        failedClients.push(clientId);
+      }
+    }
+
+    // Remove failed clients
+    failedClients.forEach(clientId => {
+      this.handleClientDisconnect(clientId);
+    });
+  }
+
+  // Send message to specific client
+  private async sendToClient(clientId: string, message: WebSocketMessage): Promise<void> {
+    const client = this.clients.get(clientId);
+    if (!client || client.ws.readyState !== WebSocket.OPEN) {
+      throw new Error(`Client ${clientId} not available`);
+    }
+
+    return new Promise((resolve, reject) => {
+      client.ws.send(JSON.stringify(message), (error) => {
+        if (error) {
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  // Broadcast to all connected clients
+  private async broadcastToAll(message: WebSocketMessage) {
+    const failedClients: string[] = [];
+
+    for (const [clientId, client] of this.clients) {
+      try {
+        await this.sendToClient(clientId, message);
+      } catch (error) {
+        failedClients.push(clientId);
+      }
+    }
+
+    // Remove failed clients
+    failedClients.forEach(clientId => {
+      this.handleClientDisconnect(clientId);
+    });
+  }
+
+  // Handle client disconnect
+  private handleClientDisconnect(clientId: string) {
+    const client = this.clients.get(clientId);
+    if (!client) return;
+
+    // Remove from all rooms
+    for (const roomId of client.subscriptions) {
+      const room = this.rooms.get(roomId);
+      if (room) {
+        room.delete(clientId);
+        if (room.size === 0) {
+          this.rooms.delete(roomId);
+        }
+      }
+    }
+
+    // Clean up client
+    this.clients.delete(clientId);
+    client.ws.close();
+
+    console.log(`Client disconnected: ${clientId}`);
+  }
+
+  // Heartbeat to keep connections alive
+  private startHeartbeat() {
+    setInterval(() => {
+      for (const [clientId, client] of this.clients) {
+        if (!client.isAlive) {
+          console.log(`Terminating inactive client: ${clientId}`);
+          this.handleClientDisconnect(clientId);
+          continue;
+        }
+
+        client.isAlive = false;
+        client.ws.ping();
+      }
+    }, 30000); // 30 seconds
+  }
+
+  // Utility methods
+  private extractToken(request: any): string | null {
+    const url = parse(request.url, true);
+    return url.query.token as string || null;
+  }
+
+  private generateClientId(): string {
+    return `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  private generateMessageId(): string {
+    return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  // Public methods for external use
+  public sendToUser(userId: string, message: WebSocketMessage) {
+    for (const [clientId, client] of this.clients) {
+      if (client.userId === userId) {
+        this.sendToClient(clientId, message).catch(console.error);
+      }
+    }
+  }
+
+  public sendToRoom(roomId: string, message: WebSocketMessage) {
+    this.broadcastToRoom(roomId, message);
+  }
+
+  public getConnectedUsers(): string[] {
+    const users = new Set<string>();
+    for (const client of this.clients.values()) {
+      if (client.userId) {
+        users.add(client.userId);
+      }
+    }
+    return Array.from(users);
+  }
+
+  public getRoomMembers(roomId: string): string[] {
+    const room = this.rooms.get(roomId);
+    if (!room) return [];
+
+    const members = new Set<string>();
+    for (const clientId of room) {
+      const client = this.clients.get(clientId);
+      if (client?.userId) {
+        members.add(client.userId);
+      }
+    }
+    return Array.from(members);
+  }
+}
+```
+
+### WebSocket Client Hook
+```tsx
+// hooks/useWebSocket.ts
+import { useEffect, useRef, useCallback, useState } from 'react';
+
+interface WebSocketMessage {
+  type: string;
+  payload: any;
+  timestamp: number;
+  messageId: string;
+}
+
+interface UseWebSocketOptions {
+  url: string;
+  token: string;
+  onMessage?: (message: WebSocketMessage) => void;
+  onOpen?: () => void;
+  onClose?: () => void;
+  onError?: (error: Event) => void;
+  reconnectAttempts?: number;
+  reconnectInterval?: number;
+}
+
+export const useWebSocket = ({
+  url,
+  token,
+  onMessage,
+  onOpen,
+  onClose,
+  onError,
+  reconnectAttempts = 5,
+  reconnectInterval = 3000,
+}: UseWebSocketOptions) => {
+  const ws = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+  const reconnectCountRef = useRef(0);
+  const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+
+  const connect = useCallback(() => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      const wsUrl = `${url}?token=${token}`;
+      ws.current = new WebSocket(wsUrl);
+      setConnectionStatus('connecting');
+
+      ws.current.onopen = () => {
+        setIsConnected(true);
+        setConnectionStatus('connected');
+        reconnectCountRef.current = 0;
+        onOpen?.();
+      };
+
+      ws.current.onmessage = (event) => {
+        try {
+          const message: WebSocketMessage = JSON.parse(event.data);
+          onMessage?.(message);
+        } catch (error) {
+          console.error('Failed to parse WebSocket message:', error);
+        }
+      };
+
+      ws.current.onclose = (event) => {
+        setIsConnected(false);
+        setConnectionStatus('disconnected');
+        onClose?.();
+
+        // Attempt to reconnect if not a clean close
+        if (event.code !== 1000 && reconnectCountRef.current < reconnectAttempts) {
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectCountRef.current++;
+            connect();
+          }, reconnectInterval);
+        }
+      };
+
+      ws.current.onerror = (error) => {
+        onError?.(error);
+      };
+    } catch (error) {
+      console.error('WebSocket connection error:', error);
+    }
+  }, [url, token, onMessage, onOpen, onClose, onError, reconnectAttempts, reconnectInterval]);
+
+  const disconnect = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+
+    if (ws.current) {
+      ws.current.close(1000, 'User initiated disconnect');
+      ws.current = null;
+    }
+
+    setIsConnected(false);
+    setConnectionStatus('disconnected');
+  }, []);
+
+  const sendMessage = useCallback((message: Omit<WebSocketMessage, 'timestamp' | 'messageId'>) => {
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      const fullMessage: WebSocketMessage = {
+        ...message,
+        timestamp: Date.now(),
+        messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      };
+
+      ws.current.send(JSON.stringify(fullMessage));
+      return true;
+    }
+    return false;
+  }, []);
+
+  const subscribeToRoom = useCallback((roomId: string) => {
+    return sendMessage({
+      type: 'room:subscribe',
+      payload: { roomId },
+    });
+  }, [sendMessage]);
+
+  const unsubscribeFromRoom = useCallback((roomId: string) => {
+    return sendMessage({
+      type: 'room:unsubscribe',
+      payload: { roomId },
+    });
+  }, [sendMessage]);
+
+  const sendRoomMessage = useCallback((roomId: string, message: string) => {
+    return sendMessage({
+      type: 'room:message',
+      payload: { roomId, message },
+    });
+  }, [sendMessage]);
+
+  const sendTypingIndicator = useCallback((roomId: string, isTyping: boolean) => {
+    return sendMessage({
+      type: 'room:typing',
+      payload: { roomId, isTyping },
+    });
+  }, [sendMessage]);
+
+  useEffect(() => {
+    connect();
+
+    return () => {
+      disconnect();
+    };
+  }, [connect, disconnect]);
+
+  return {
+    isConnected,
+    connectionStatus,
+    sendMessage,
+    subscribeToRoom,
+    unsubscribeFromRoom,
+    sendRoomMessage,
+    sendTypingIndicator,
+    connect,
+    disconnect,
+  };
+};
+```
+
+## Server-Sent Events (SSE)
+
+### SSE Server Implementation
+```tsx
+// lib/sse/server.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { verifyToken } from '@/lib/auth/jwt';
+
+export class SSEServer {
+  private static clients: Map<string, {
+    response: NextResponse;
+    userId: string;
+    lastPing: number;
+  }> = new Map();
+
+  // Handle SSE connection
+  static async handleConnection(request: NextRequest): Promise<NextResponse> {
+    try {
+      // Authenticate user
+      const token = request.headers.get('authorization')?.replace('Bearer ', '');
+      if (!token) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+
+      const payload = await verifyToken(token, 'access');
+      const clientId = this.generateClientId();
+
+      // Create SSE response
+      const response = new NextResponse(
+        new ReadableStream({
+          start(controller) {
+            // Send initial connection message
+            const message = `data: ${JSON.stringify({
+              type: 'connection:established',
+              payload: { clientId, userId: payload.userId },
+              timestamp: Date.now(),
+            })}\n\n`;
+
+            controller.enqueue(new TextEncoder().encode(message));
+          },
+        }),
+        {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Client-ID': clientId,
+          },
+        }
+      );
+
+      // Store client
+      this.clients.set(clientId, {
+        response,
+        userId: payload.userId,
+        lastPing: Date.now(),
+      });
+
+      // Clean up on disconnect
+      request.signal.addEventListener('abort', () => {
+        this.removeClient(clientId);
+      });
+
+      return response;
+    } catch (error) {
+      console.error('SSE connection error:', error);
+      return NextResponse.json({ error: 'Authentication failed' }, { status: 401 });
+    }
+  }
+
+  // Send message to specific client
+  static sendToClient(clientId: string, message: any): boolean {
+    const client = this.clients.get(clientId);
+    if (!client) return false;
+
+    try {
+      const data = `data: ${JSON.stringify(message)}\n\n`;
+      const encoder = new TextEncoder();
+      const chunk = encoder.encode(data);
+      
+      // This is a simplified version - in practice you'd need to handle
+      // the actual streaming response differently
+      return true;
+    } catch (error) {
+      console.error(`Failed to send SSE message to client ${clientId}:`, error);
+      this.removeClient(clientId);
+      return false;
+    }
+  }
+
+  // Send message to all clients
+  static broadcast(message: any): void {
+    const failedClients: string[] = [];
+
+    for (const [clientId, client] of this.clients) {
+      if (!this.sendToClient(clientId, message)) {
+        failedClients.push(clientId);
+      }
+    }
+
+    // Remove failed clients
+    failedClients.forEach(clientId => this.removeClient(clientId));
+  }
+
+  // Send message to specific user
+  static sendToUser(userId: string, message: any): void {
+    const failedClients: string[] = [];
+
+    for (const [clientId, client] of this.clients) {
+      if (client.userId === userId) {
+        if (!this.sendToClient(clientId, message)) {
+          failedClients.push(clientId);
+        }
+      }
+    }
+
+    // Remove failed clients
+    failedClients.forEach(clientId => this.removeClient(clientId));
+  }
+
+  // Remove client
+  private static removeClient(clientId: string): void {
+    this.clients.delete(clientId);
+  }
+
+  // Generate client ID
+  private static generateClientId(): string {
+    return `sse_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  // Get connected clients info
+  static getConnectedClients(): Array<{ clientId: string; userId: string }> {
+    return Array.from(this.clients.entries()).map(([clientId, client]) => ({
+      clientId,
+      userId: client.userId,
+    }));
+  }
+}
+```
+
+### SSE Client Hook
+```tsx
+// hooks/useSSE.ts
+import { useEffect, useRef, useCallback, useState } from 'react';
+
+interface SSEMessage {
+  type: string;
+  payload: any;
+  timestamp: number;
+}
+
+interface UseSSEOptions {
+  url: string;
+  token: string;
+  onMessage?: (message: SSEMessage) => void;
+  onOpen?: () => void;
+  onError?: (error: Event) => void;
+}
+
+export const useSSE = ({ url, token, onMessage, onOpen, onError }: UseSSEOptions) => {
+  const eventSource = useRef<EventSource | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected'>('disconnected');
+
+  const connect = useCallback(() => {
+    if (eventSource.current) {
+      eventSource.current.close();
+    }
+
+    try {
+      setConnectionStatus('connecting');
+      
+      // Create EventSource with authorization header
+      // Note: EventSource doesn't support custom headers, so we'll use URL params
+      const sseUrl = `${url}?token=${token}`;
+      eventSource.current = new EventSource(sseUrl);
+
+      eventSource.current.onopen = () => {
+        setIsConnected(true);
+        setConnectionStatus('connected');
+        onOpen?.();
+      };
+
+      eventSource.current.onmessage = (event) => {
+        try {
+          const message: SSEMessage = JSON.parse(event.data);
+          onMessage?.(message);
+        } catch (error) {
+          console.error('Failed to parse SSE message:', error);
+        }
+      };
+
+      eventSource.current.onerror = (error) => {
+        setIsConnected(false);
+        setConnectionStatus('disconnected');
+        onError?.(error);
+      };
+    } catch (error) {
+      console.error('SSE connection error:', error);
+      setConnectionStatus('disconnected');
+    }
+  }, [url, token, onMessage, onOpen, onError]);
+
+  const disconnect = useCallback(() => {
+    if (eventSource.current) {
+      eventSource.current.close();
+      eventSource.current = null;
+    }
+
+    setIsConnected(false);
+    setConnectionStatus('disconnected');
+  }, []);
+
+  useEffect(() => {
+    connect();
+
+    return () => {
+      disconnect();
+    };
+  }, [connect, disconnect]);
+
+  return {
+    isConnected,
+    connectionStatus,
+    connect,
+    disconnect,
+  };
+};
+```
+
+## Real-Time Collaboration
+
+### Collaborative Document Editing
+```tsx
+// lib/collaboration/document.ts
+import { prisma } from '@/lib/db';
+
+export interface DocumentOperation {
+  id: string;
+  type: 'insert' | 'delete' | 'format';
+  position: number;
+  content?: string;
+  length?: number;
+  format?: Record<string, any>;
+  userId: string;
+  timestamp: number;
+  version: number;
+}
+
+export class CollaborativeDocument {
+  private documentId: string;
+  private operations: DocumentOperation[] = [];
+  private version = 0;
+  private clients: Map<string, {
+    userId: string;
+    lastSeenVersion: number;
+    cursor?: { position: number; selection?: { start: number; end: number } };
+  }> = new Map();
+
+  constructor(documentId: string) {
+    this.documentId = documentId;
+    this.loadDocument();
+  }
+
+  // Add client to document
+  addClient(clientId: string, userId: string): void {
+    this.clients.set(clientId, {
+      userId,
+      lastSeenVersion: this.version,
+    });
+  }
+
+  // Remove client from document
+  removeClient(clientId: string): void {
+    this.clients.delete(clientId);
+  }
+
+  // Apply operation to document
+  async applyOperation(operation: Omit<DocumentOperation, 'id' | 'version'>): Promise<DocumentOperation> {
+    const fullOperation: DocumentOperation = {
+      ...operation,
+      id: this.generateOperationId(),
+      version: ++this.version,
+    };
+
+    // Apply operation to local state
+    this.operations.push(fullOperation);
+
+    // Store operation in database
+    await this.storeOperation(fullOperation);
+
+    // Broadcast to all clients
+    this.broadcastOperation(fullOperation);
+
+    return fullOperation;
+  }
+
+  // Get operations since specific version
+  getOperationsSince(version: number): DocumentOperation[] {
+    return this.operations.filter(op => op.version > version);
+  }
+
+  // Update client cursor
+  updateClientCursor(clientId: string, cursor: { position: number; selection?: { start: number; end: number } }): void {
+    const client = this.clients.get(clientId);
+    if (client) {
+      client.cursor = cursor;
+    }
+  }
+
+  // Get active clients
+  getActiveClients(): Array<{ userId: string; cursor?: { position: number; selection?: { start: number; end: number } } }> {
+    return Array.from(this.clients.values()).map(client => ({
+      userId: client.userId,
+      cursor: client.cursor,
+    }));
+  }
+
+  // Load document from database
+  private async loadDocument(): Promise<void> {
+    try {
+      const doc = await prisma.document.findUnique({
+        where: { id: this.documentId },
+        include: { operations: { orderBy: { version: 'asc' } } },
+      });
+
+      if (doc) {
+        this.operations = doc.operations;
+        this.version = doc.operations.length > 0 ? doc.operations[doc.operations.length - 1].version : 0;
+      }
+    } catch (error) {
+      console.error('Failed to load document:', error);
+    }
+  }
+
+  // Store operation in database
+  private async storeOperation(operation: DocumentOperation): Promise<void> {
+    try {
+      await prisma.documentOperation.create({
+        data: {
+          id: operation.id,
+          documentId: this.documentId,
+          type: operation.type,
+          position: operation.position,
+          content: operation.content,
+          length: operation.length,
+          format: operation.format,
+          userId: operation.userId,
+          timestamp: operation.timestamp,
+          version: operation.version,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to store operation:', error);
+    }
+  }
+
+  // Broadcast operation to all clients
+  private broadcastOperation(operation: DocumentOperation): void {
+    // This would integrate with your WebSocket server
+    // to broadcast the operation to all connected clients
+  }
+
+  // Generate operation ID
+  private generateOperationId(): string {
+    return `op_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+}
+
+// Document manager for multiple documents
+export class DocumentManager {
+  private static documents: Map<string, CollaborativeDocument> = new Map();
+
+  static getDocument(documentId: string): CollaborativeDocument {
+    if (!this.documents.has(documentId)) {
+      this.documents.set(documentId, new CollaborativeDocument(documentId));
+    }
+    return this.documents.get(documentId)!;
+  }
+
+  static removeDocument(documentId: string): void {
+    this.documents.delete(documentId);
+  }
+}
+```
+
+## Live Updates & Notifications
+
+### Notification Service
+```tsx
+// lib/notifications/service.ts
+import { prisma } from '@/lib/db';
+import { WebSocketServerManager } from '@/lib/websocket/server';
+
+export interface Notification {
+  id: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  title: string;
+  message: string;
+  userId: string;
+  data?: Record<string, any>;
+  read: boolean;
+  createdAt: Date;
+  readAt?: Date;
+}
+
+export class NotificationService {
+  // Create notification
+  static async createNotification(
+    userId: string,
+    type: Notification['type'],
+    title: string,
+    message: string,
+    data?: Record<string, any>
+  ): Promise<Notification> {
+    const notification = await prisma.notification.create({
+      data: {
+        type,
+        title,
+        message,
+        userId,
+        data,
+        read: false,
+      },
+    });
+
+    // Send real-time notification
+    this.sendRealTimeNotification(userId, notification);
+
+    return notification;
+  }
+
+  // Mark notification as read
+  static async markAsRead(notificationId: string, userId: string): Promise<void> {
+    await prisma.notification.update({
+      where: { id: notificationId, userId },
+      data: { read: true, readAt: new Date() },
+    });
+  }
+
+  // Mark all notifications as read
+  static async markAllAsRead(userId: string): Promise<void> {
+    await prisma.notification.updateMany({
+      where: { userId, read: false },
+      data: { read: true, readAt: new Date() },
+    });
+  }
+
+  // Get user notifications
+  static async getUserNotifications(
+    userId: string,
+    options: {
+      page?: number;
+      limit?: number;
+      unreadOnly?: boolean;
+    } = {}
+  ): Promise<{ notifications: Notification[]; total: number }> {
+    const { page = 1, limit = 20, unreadOnly = false } = options;
+
+    const where = { userId };
+    if (unreadOnly) {
+      where.read = false;
+    }
+
+    const [notifications, total] = await Promise.all([
+      prisma.notification.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.notification.count({ where }),
+    ]);
+
+    return { notifications, total };
+  }
+
+  // Get unread count
+  static async getUnreadCount(userId: string): Promise<number> {
+    return prisma.notification.count({
+      where: { userId, read: false },
+    });
+  }
+
+  // Send real-time notification
+  private static sendRealTimeNotification(userId: string, notification: Notification): void {
+    // Send via WebSocket if available
+    if (WebSocketServerManager) {
+      WebSocketServerManager.sendToUser(userId, {
+        type: 'notification:new',
+        payload: notification,
+        timestamp: Date.now(),
+        messageId: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      });
+    }
+  }
+
+  // Bulk create notifications
+  static async createBulkNotifications(
+    userIds: string[],
+    type: Notification['type'],
+    title: string,
+    message: string,
+    data?: Record<string, any>
+  ): Promise<void> {
+    const notifications = userIds.map(userId => ({
+      type,
+      title,
+      message,
+      userId,
+      data,
+      read: false,
+    }));
+
+    await prisma.notification.createMany({
+      data: notifications,
+    });
+
+    // Send real-time notifications to all users
+    userIds.forEach(userId => {
+      this.sendRealTimeNotification(userId, {
+        id: `bulk_${Date.now()}_${userId}`,
+        type,
+        title,
+        message,
+        userId,
+        data,
+        read: false,
+        createdAt: new Date(),
+      });
+    });
+  }
+}
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Use WebSockets for bidirectional real-time communication
+- Implement Server-Sent Events for one-way updates
+- Handle connection management and reconnection
+- Implement proper error handling and fallbacks
+- Use message queuing for reliability
+- Implement rate limiting for real-time endpoints
+- Handle connection scaling with Redis/Kafka
+- Implement proper cleanup on disconnect
+
+### ❌ Don'ts
+- Don't forget to handle connection failures
+- Don't skip authentication for real-time connections
+- Don't ignore message ordering and delivery
+- Don't forget to implement reconnection logic
+- Don't skip rate limiting on real-time endpoints
+- Don't ignore connection cleanup
+
+### 🔧 Implementation Checklist
+- [ ] Set up WebSocket server with authentication
+- [ ] Implement SSE for one-way updates
+- [ ] Create real-time collaboration features
+- [ ] Set up notification system
+- [ ] Implement connection management
+- [ ] Add reconnection logic
+- [ ] Set up rate limiting
+- [ ] Test real-time features thoroughly
+- [ ] Monitor connection performance
+- [ ] Implement proper error handling
+description:
+globs:
+alwaysApply: false
+---
+description:
+globs:
+alwaysApply: false
+---

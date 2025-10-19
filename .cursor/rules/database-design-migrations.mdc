@@ -1,0 +1,1107 @@
+# Database Design & Migration Patterns Best Practices
+
+## Database Design Strategy
+
+### Design Principles
+```tsx
+// ✅ Good: Database design principles
+// - Normalization: Reduce data redundancy and anomalies
+// - Denormalization: Strategic redundancy for performance
+// - Consistency: Maintain data integrity across operations
+// - Scalability: Design for growth and performance
+// - Security: Implement proper access controls and encryption
+```
+
+### Database Types & Use Cases
+```tsx
+// ✅ Good: Choose database based on use case
+type DatabaseType = 
+  | 'relational'     // PostgreSQL, MySQL - ACID compliance, complex queries
+  | 'document'       // MongoDB, CouchDB - Flexible schemas, JSON data
+  | 'key-value'      // Redis, DynamoDB - Caching, session storage
+  | 'graph'          // Neo4j, ArangoDB - Complex relationships, social networks
+  | 'time-series'    // InfluxDB, TimescaleDB - Metrics, IoT data
+  | 'search'         // Elasticsearch, Algolia - Full-text search, analytics
+```
+
+## Prisma Schema Design
+
+### Core Schema Structure
+```tsx
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions", "fullTextSearch", "fullTextIndex"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL") // For direct connections
+}
+
+// Base model for common fields
+model BaseModel {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime? // Soft delete support
+  
+  @@map("base_models")
+}
+
+// User management
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique @db.VarChar(255)
+  firstName String   @db.VarChar(100)
+  lastName  String   @db.VarChar(100)
+  password  String   @db.VarChar(255)
+  avatar    String?  @db.VarChar(500)
+  isActive  Boolean  @default(true)
+  emailVerified Boolean @default(false)
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  profile     UserProfile?
+  preferences UserPreferences?
+  posts       Post[]
+  comments    Comment[]
+  likes       Like[]
+  sessions    Session[]
+  roles       UserRole[]
+
+  // Indexes
+  @@index([email])
+  @@index([isActive])
+  @@index([createdAt])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model UserProfile {
+  id          String  @id @default(cuid())
+  userId      String  @unique
+  bio         String? @db.Text
+  location    String? @db.VarChar(100)
+  website     String? @db.VarChar(500)
+  company     String? @db.VarChar(100)
+  jobTitle    String? @db.VarChar(100)
+  socialLinks Json?   // LinkedIn, Twitter, etc.
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_profiles")
+}
+
+model UserPreferences {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  language     Language @default(EN)
+  theme        Theme    @default(SYSTEM)
+  timezone     String   @default("UTC")
+  dateFormat   String   @default("MM/DD/YYYY")
+  notifications Json    @default("{}")
+  privacy      Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+// Content management
+model Post {
+  id          String   @id @default(cuid())
+  title       String   @db.VarChar(200)
+  slug        String   @unique @db.VarChar(200)
+  content     String   @db.Text
+  excerpt     String?  @db.VarChar(500)
+  featuredImage String? @db.VarChar(500)
+  status      PostStatus @default(DRAFT)
+  publishedAt DateTime?
+  authorId    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  // Relations
+  author     User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  categories PostCategory[]
+  comments   Comment[]
+  likes      Like[]
+  tags       PostTag[]
+
+  // Indexes
+  @@index([authorId])
+  @@index([status])
+  @@index([publishedAt])
+  @@index([slug])
+  @@index([deletedAt])
+  @@fulltext([title, content, excerpt])
+  @@map("posts")
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String   @unique @db.VarChar(100)
+  slug        String   @unique @db.VarChar(100)
+  description String?  @db.Text
+  parentId    String?  // For hierarchical categories
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
+  posts    PostCategory[]
+
+  // Indexes
+  @@index([parentId])
+  @@index([isActive])
+  @@index([sortOrder])
+  @@map("categories")
+}
+
+// Junction tables
+model PostCategory {
+  postId     String
+  categoryId String
+
+  // Relations
+  post     Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([postId, categoryId])
+  @@map("post_categories")
+}
+
+model PostTag {
+  postId String
+  tagId  String
+
+  // Relations
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([postId, tagId])
+  @@map("post_tags")
+}
+
+// Enums
+enum Language {
+  EN
+  ES
+  AR
+  ZH
+}
+
+enum Theme {
+  LIGHT
+  DARK
+  SYSTEM
+}
+
+enum PostStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  SCHEDULED
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+  SUPER_ADMIN
+}
+```
+
+### Advanced Schema Patterns
+```tsx
+// prisma/schema-advanced.prisma
+// Audit trail pattern
+model AuditLog {
+  id        String   @id @default(cuid())
+  tableName String   @db.VarChar(100)
+  recordId  String   @db.VarChar(100)
+  action    String   @db.VarChar(50) // CREATE, UPDATE, DELETE
+  oldValues Json?
+  newValues Json?
+  userId    String?
+  ipAddress String?  @db.VarChar(45)
+  userAgent String?  @db.Text
+  timestamp DateTime @default(now())
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+
+  // Indexes
+  @@index([tableName, recordId])
+  @@index([userId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
+
+// Soft delete pattern
+model SoftDeleteModel {
+  id        String   @id @default(cuid())
+  name      String
+  deletedAt DateTime?
+  deletedBy String?
+
+  // Relations
+  deletedByUser User? @relation(fields: [deletedBy], references: [id])
+
+  // Indexes
+  @@index([deletedAt])
+  @@map("soft_delete_models")
+}
+
+// Polymorphic relationships
+model Comment {
+  id        String   @id @default(cuid())
+  content   String   @db.Text
+  authorId  String
+  parentId  String?  // For nested comments
+  entityType String  @db.VarChar(50) // POST, COMMENT, etc.
+  entityId  String   @db.VarChar(100)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Relations
+  author     User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  parent     Comment? @relation("CommentReplies", fields: [parentId], references: [id])
+  replies    Comment[] @relation("CommentReplies")
+
+  // Indexes
+  @@index([authorId])
+  @@index([parentId])
+  @@index([entityType, entityId])
+  @@index([deletedAt])
+  @@map("comments")
+}
+
+// Full-text search with weights
+model SearchableContent {
+  id          String   @id @default(cuid())
+  title       String   @db.VarChar(200)
+  content     String   @db.Text
+  tags        String[] // Array of tags
+  searchVector Unsupported("tsvector")? // PostgreSQL full-text search vector
+
+  @@fulltext([title, content], map: "content_search")
+  @@map("searchable_content")
+}
+```
+
+## Database Indexing Strategies
+
+### Index Types & Use Cases
+```tsx
+// lib/database/indexing.ts
+export interface IndexStrategy {
+  // Primary indexes (automatically created)
+  primary: 'id'; // Unique identifier
+  
+  // Secondary indexes for performance
+  secondary: {
+    // Single column indexes
+    email: 'users.email';
+    status: 'posts.status';
+    createdAt: 'posts.created_at';
+    
+    // Composite indexes for complex queries
+    userPosts: 'posts.user_id, posts.created_at';
+    categoryPosts: 'posts.category_id, posts.status, posts.published_at';
+    
+    // Partial indexes for filtered data
+    activeUsers: 'users.is_active WHERE is_active = true';
+    publishedPosts: 'posts.published_at WHERE status = \'published\'';
+    
+    // Unique indexes for constraints
+    userEmail: 'users.email UNIQUE';
+    postSlug: 'posts.slug UNIQUE';
+    
+    // Full-text search indexes
+    postSearch: 'posts.title, posts.content, posts.excerpt';
+  };
+}
+
+// Index creation utilities
+export class IndexManager {
+  // Create composite index
+  static createCompositeIndex(table: string, columns: string[], options?: {
+    unique?: boolean;
+    name?: string;
+    where?: string;
+  }): string {
+    const indexName = options?.name || `${table}_${columns.join('_')}_idx`;
+    const unique = options?.unique ? 'UNIQUE' : '';
+    const where = options?.where ? `WHERE ${options.where}` : '';
+    
+    return `
+      CREATE ${unique} INDEX ${indexName} 
+      ON ${table} (${columns.join(', ')})
+      ${where};
+    `;
+  }
+
+  // Create partial index
+  static createPartialIndex(table: string, columns: string[], condition: string, options?: {
+    name?: string;
+  }): string {
+    const indexName = options?.name || `${table}_${columns.join('_')}_partial_idx`;
+    
+    return `
+      CREATE INDEX ${indexName} 
+      ON ${table} (${columns.join(', ')})
+      WHERE ${condition};
+    `;
+  }
+
+  // Create full-text search index
+  static createFullTextIndex(table: string, columns: string[], options?: {
+    name?: string;
+    language?: string;
+  }): string {
+    const indexName = options?.name || `${table}_${columns.join('_')}_fts_idx`;
+    const language = options?.language || 'english';
+    
+    return `
+      CREATE INDEX ${indexName} 
+      ON ${table} 
+      USING gin(to_tsvector('${language}', ${columns.join(' || \' \' || ')}));
+    `;
+  }
+}
+
+// Common indexing patterns
+export const INDEXING_PATTERNS = {
+  // User queries
+  userLookup: IndexManager.createCompositeIndex('users', ['email', 'is_active']),
+  userSearch: IndexManager.createCompositeIndex('users', ['first_name', 'last_name', 'email']),
+  
+  // Post queries
+  postByAuthor: IndexManager.createCompositeIndex('posts', ['author_id', 'status', 'created_at']),
+  postByCategory: IndexManager.createCompositeIndex('posts', ['category_id', 'status', 'published_at']),
+  postSearch: IndexManager.createFullTextIndex('posts', ['title', 'content', 'excerpt']),
+  
+  // Comment queries
+  commentByEntity: IndexManager.createCompositeIndex('comments', ['entity_type', 'entity_id', 'created_at']),
+  commentByAuthor: IndexManager.createCompositeIndex('comments', ['author_id', 'created_at']),
+  
+  // Soft delete support
+  activeRecords: IndexManager.createPartialIndex('posts', ['id'], 'deleted_at IS NULL'),
+  deletedRecords: IndexManager.createPartialIndex('posts', ['deleted_at'], 'deleted_at IS NOT NULL'),
+} as const;
+```
+
+### Query Optimization
+```tsx
+// lib/database/query-optimization.ts
+import { prisma } from '@/lib/db';
+
+export class QueryOptimizer {
+  // Optimize user queries with proper includes
+  static async getUsersWithProfile(page: number = 1, limit: number = 20, search?: string) {
+    const where = search ? {
+      OR: [
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+      ],
+      isActive: true,
+      deletedAt: null,
+    } : {
+      isActive: true,
+      deletedAt: null,
+    };
+
+    // Use findManyAndCount for efficient pagination
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          avatar: true,
+          createdAt: true,
+          profile: {
+            select: {
+              bio: true,
+              location: true,
+              company: true,
+              jobTitle: true,
+            },
+          },
+          preferences: {
+            select: {
+              language: true,
+              theme: true,
+              timezone: true,
+            },
+          },
+          _count: {
+            select: {
+              posts: true,
+              comments: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    return { users, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  // Optimize post queries with efficient includes
+  static async getPostsWithRelations(page: number = 1, limit: number = 20, filters?: {
+    categoryId?: string;
+    authorId?: string;
+    status?: string;
+    search?: string;
+  }) {
+    const where = {
+      ...(filters?.categoryId && {
+        categories: { some: { categoryId: filters.categoryId } },
+      }),
+      ...(filters?.authorId && { authorId: filters.authorId }),
+      ...(filters?.status && { status: filters.status }),
+      ...(filters?.search && {
+        OR: [
+          { title: { contains: filters.search, mode: 'insensitive' } },
+          { content: { contains: filters.search, mode: 'insensitive' } },
+          { excerpt: { contains: filters.search, mode: 'insensitive' } },
+        ],
+      }),
+      deletedAt: null,
+    };
+
+    const [posts, total] = await Promise.all([
+      prisma.post.findMany({
+        where,
+        select: {
+          id: true,
+          title: true,
+          slug: true,
+          excerpt: true,
+          featuredImage: true,
+          publishedAt: true,
+          createdAt: true,
+          author: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              avatar: true,
+            },
+          },
+          categories: {
+            select: {
+              category: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                },
+              },
+            },
+          },
+          _count: {
+            select: {
+              comments: true,
+              likes: true,
+            },
+          },
+        },
+        orderBy: { publishedAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      prisma.post.count({ where }),
+    ]);
+
+    return { posts, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  // Use raw SQL for complex queries when needed
+  static async getPostAnalytics(postId: string) {
+    const result = await prisma.$queryRaw`
+      SELECT 
+        p.id,
+        p.title,
+        p.published_at,
+        COUNT(DISTINCT c.id) as comment_count,
+        COUNT(DISTINCT l.id) as like_count,
+        AVG(EXTRACT(EPOCH FROM (c.created_at - p.published_at))) as avg_comment_time,
+        COUNT(DISTINCT CASE WHEN c.created_at > p.published_at + INTERVAL '24 hours' THEN c.id END) as comments_after_24h
+      FROM posts p
+      LEFT JOIN comments c ON p.id = c.post_id AND c.deleted_at IS NULL
+      LEFT JOIN likes l ON p.id = l.post_id
+      WHERE p.id = ${postId} AND p.deleted_at IS NULL
+      GROUP BY p.id, p.title, p.published_at
+    `;
+
+    return result[0];
+  }
+
+  // Batch operations for better performance
+  static async batchUpdateUserStatuses(userIds: string[], isActive: boolean) {
+    return prisma.user.updateMany({
+      where: { id: { in: userIds } },
+      data: { isActive, updatedAt: new Date() },
+    });
+  }
+
+  // Use transactions for data consistency
+  static async createPostWithCategories(postData: any, categoryIds: string[]) {
+    return prisma.$transaction(async (tx) => {
+      // Create post
+      const post = await tx.post.create({
+        data: postData,
+      });
+
+      // Create category relationships
+      if (categoryIds.length > 0) {
+        await tx.postCategory.createMany({
+          data: categoryIds.map(categoryId => ({
+            postId: post.id,
+            categoryId,
+          })),
+        });
+      }
+
+      return post;
+    });
+  }
+}
+```
+
+## Migration Strategies
+
+### Migration Best Practices
+```tsx
+// lib/database/migrations.ts
+export interface MigrationConfig {
+  name: string;
+  description: string;
+  up: () => Promise<void>;
+  down: () => Promise<void>;
+  dependencies?: string[];
+  rollbackStrategy: 'immediate' | 'deferred' | 'manual';
+}
+
+export class MigrationManager {
+  private static instance: MigrationManager;
+  private migrations: Map<string, MigrationConfig> = new Map();
+
+  static getInstance(): MigrationManager {
+    if (!MigrationManager.instance) {
+      MigrationManager.instance = new MigrationManager();
+    }
+    return MigrationManager.instance;
+  }
+
+  // Register a migration
+  registerMigration(config: MigrationConfig): void {
+    this.migrations.set(config.name, config);
+  }
+
+  // Run migrations in order
+  async runMigrations(targetMigration?: string): Promise<void> {
+    const sortedMigrations = this.getSortedMigrations();
+    const targetIndex = targetMigration 
+      ? sortedMigrations.findIndex(m => m.name === targetMigration)
+      : sortedMigrations.length;
+
+    for (let i = 0; i < targetIndex; i++) {
+      const migration = sortedMigrations[i];
+      console.log(`Running migration: ${migration.name}`);
+      
+      try {
+        await migration.up();
+        console.log(`✓ Migration ${migration.name} completed successfully`);
+      } catch (error) {
+        console.error(`✗ Migration ${migration.name} failed:`, error);
+        await this.rollbackMigration(migration);
+        throw error;
+      }
+    }
+  }
+
+  // Rollback a specific migration
+  async rollbackMigration(migration: MigrationConfig): Promise<void> {
+    console.log(`Rolling back migration: ${migration.name}`);
+    
+    try {
+      await migration.down();
+      console.log(`✓ Rollback of ${migration.name} completed successfully`);
+    } catch (error) {
+      console.error(`✗ Rollback of ${migration.name} failed:`, error);
+      throw error;
+    }
+  }
+
+  // Get migrations in dependency order
+  private getSortedMigrations(): MigrationConfig[] {
+    const migrations = Array.from(this.migrations.values());
+    const sorted: MigrationConfig[] = [];
+    const visited = new Set<string>();
+
+    const visit = (migration: MigrationConfig) => {
+      if (visited.has(migration.name)) return;
+      if (migration.dependencies) {
+        for (const dep of migration.dependencies) {
+          const depMigration = this.migrations.get(dep);
+          if (depMigration) {
+            visit(depMigration);
+          }
+        }
+      }
+      visited.add(migration.name);
+      sorted.push(migration);
+    };
+
+    migrations.forEach(visit);
+    return sorted;
+  }
+}
+
+// Example migrations
+export const createInitialSchema = {
+  name: '001_create_initial_schema',
+  description: 'Create initial database schema with users, posts, and categories',
+  rollbackStrategy: 'immediate' as const,
+  
+  up: async () => {
+    // This would be handled by Prisma migrations
+    console.log('Creating initial schema...');
+  },
+  
+  down: async () => {
+    console.log('Rolling back initial schema...');
+  },
+};
+
+export const addFullTextSearch = {
+  name: '002_add_full_text_search',
+  description: 'Add full-text search capabilities to posts',
+  dependencies: ['001_create_initial_schema'],
+  rollbackStrategy: 'deferred' as const,
+  
+  up: async () => {
+    // Add full-text search indexes
+    console.log('Adding full-text search indexes...');
+  },
+  
+  down: async () => {
+    console.log('Removing full-text search indexes...');
+  },
+};
+```
+
+### Prisma Migration Commands
+```bash
+# Generate migration from schema changes
+npx prisma migrate dev --name add_user_preferences
+
+# Apply migrations to database
+npx prisma migrate deploy
+
+# Reset database (development only)
+npx prisma migrate reset
+
+# Generate migration SQL without applying
+npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma
+
+# Check migration status
+npx prisma migrate status
+
+# Create migration from existing database
+npx prisma db pull
+npx prisma migrate dev --name init
+```
+
+## Backup & Recovery Strategies
+
+### Backup Strategies
+```tsx
+// lib/database/backup.ts
+export interface BackupConfig {
+  type: 'full' | 'incremental' | 'differential';
+  schedule: 'daily' | 'weekly' | 'monthly';
+  retention: number; // days
+  compression: boolean;
+  encryption: boolean;
+  storage: 'local' | 's3' | 'gcs';
+}
+
+export class BackupManager {
+  private static instance: BackupManager;
+  private config: BackupConfig;
+
+  constructor(config: BackupConfig) {
+    this.config = config;
+  }
+
+  static getInstance(): BackupManager {
+    if (!BackupManager.instance) {
+      BackupManager.instance = new BackupManager({
+        type: 'full',
+        schedule: 'daily',
+        retention: 30,
+        compression: true,
+        encryption: true,
+        storage: 's3',
+      });
+    }
+    return BackupManager.instance;
+  }
+
+  // Create database backup
+  async createBackup(): Promise<string> {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `backup-${timestamp}.sql`;
+    
+    try {
+      // Create backup using pg_dump
+      const { exec } = require('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(exec);
+      
+      const command = `pg_dump ${process.env.DATABASE_URL} --clean --if-exists --no-owner --no-privileges > ${filename}`;
+      await execAsync(command);
+      
+      // Compress if enabled
+      if (this.config.compression) {
+        await execAsync(`gzip ${filename}`);
+        filename += '.gz';
+      }
+      
+      // Upload to storage
+      await this.uploadToStorage(filename);
+      
+      // Clean up local file
+      await execAsync(`rm ${filename}`);
+      
+      return filename;
+    } catch (error) {
+      console.error('Backup failed:', error);
+      throw error;
+    }
+  }
+
+  // Restore database from backup
+  async restoreBackup(backupFile: string): Promise<void> {
+    try {
+      const { exec } = require('child_process');
+      const { promisify } = require('util');
+      const execAsync = promisify(exec);
+      
+      // Download from storage if needed
+      if (!backupFile.startsWith('/')) {
+        backupFile = await this.downloadFromStorage(backupFile);
+      }
+      
+      // Decompress if needed
+      if (backupFile.endsWith('.gz')) {
+        await execAsync(`gunzip ${backupFile}`);
+        backupFile = backupFile.replace('.gz', '');
+      }
+      
+      // Restore database
+      const command = `psql ${process.env.DATABASE_URL} < ${backupFile}`;
+      await execAsync(command);
+      
+      console.log('Database restored successfully');
+    } catch (error) {
+      console.error('Restore failed:', error);
+      throw error;
+    }
+  }
+
+  // Schedule automated backups
+  scheduleBackups(): void {
+    const cron = require('node-cron');
+    
+    cron.schedule('0 2 * * *', async () => { // Daily at 2 AM
+      try {
+        await this.createBackup();
+        await this.cleanupOldBackups();
+      } catch (error) {
+        console.error('Scheduled backup failed:', error);
+      }
+    });
+  }
+
+  // Clean up old backups
+  private async cleanupOldBackups(): Promise<void> {
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - this.config.retention);
+    
+    // Implementation depends on storage backend
+    console.log(`Cleaning up backups older than ${cutoffDate}`);
+  }
+
+  // Upload backup to storage
+  private async uploadToStorage(filename: string): Promise<void> {
+    // Implementation depends on storage backend
+    console.log(`Uploading ${filename} to storage`);
+  }
+
+  // Download backup from storage
+  private async downloadFromStorage(filename: string): Promise<string> {
+    // Implementation depends on storage backend
+    console.log(`Downloading ${filename} from storage`);
+    return `/tmp/${filename}`;
+  }
+}
+
+export const backupManager = BackupManager.getInstance();
+```
+
+### Recovery Procedures
+```tsx
+// lib/database/recovery.ts
+export interface RecoveryPlan {
+  name: string;
+  description: string;
+  steps: RecoveryStep[];
+  estimatedTime: string;
+  riskLevel: 'low' | 'medium' | 'high';
+}
+
+export interface RecoveryStep {
+  order: number;
+  action: string;
+  command?: string;
+  description: string;
+  rollback?: string;
+}
+
+export class RecoveryManager {
+  private static instance: RecoveryManager;
+  private recoveryPlans: Map<string, RecoveryPlan> = new Map();
+
+  static getInstance(): RecoveryManager {
+    if (!RecoveryManager.instance) {
+      RecoveryManager.instance = new RecoveryManager();
+    }
+    return RecoveryManager.instance;
+  }
+
+  // Register recovery plan
+  registerRecoveryPlan(plan: RecoveryPlan): void {
+    this.recoveryPlans.set(plan.name, plan);
+  }
+
+  // Execute recovery plan
+  async executeRecoveryPlan(planName: string): Promise<void> {
+    const plan = this.recoveryPlans.get(planName);
+    if (!plan) {
+      throw new Error(`Recovery plan '${planName}' not found`);
+    }
+
+    console.log(`Executing recovery plan: ${plan.name}`);
+    console.log(`Estimated time: ${plan.estimatedTime}`);
+    console.log(`Risk level: ${plan.riskLevel}`);
+
+    const executedSteps: RecoveryStep[] = [];
+
+    try {
+      for (const step of plan.steps) {
+        console.log(`Step ${step.order}: ${step.action}`);
+        console.log(step.description);
+        
+        if (step.command) {
+          const { exec } = require('child_process');
+          const { promisify } = require('util');
+          const execAsync = promisify(exec);
+          
+          await execAsync(step.command);
+        }
+        
+        executedSteps.push(step);
+        console.log(`✓ Step ${step.order} completed`);
+      }
+      
+      console.log('Recovery plan executed successfully');
+    } catch (error) {
+      console.error('Recovery plan failed:', error);
+      await this.rollbackRecovery(executedSteps);
+      throw error;
+    }
+  }
+
+  // Rollback recovery steps
+  private async rollbackRecovery(executedSteps: RecoveryStep[]): Promise<void> {
+    console.log('Rolling back recovery steps...');
+    
+    for (const step of executedSteps.reverse()) {
+      if (step.rollback) {
+        console.log(`Rolling back step ${step.order}: ${step.action}`);
+        
+        try {
+          const { exec } = require('child_process');
+          const { promisify } = require('util');
+          const execAsync = promisify(exec);
+          
+          await execAsync(step.rollback);
+          console.log(`✓ Step ${step.order} rolled back successfully`);
+        } catch (rollbackError) {
+          console.error(`✗ Failed to rollback step ${step.order}:`, rollbackError);
+        }
+      }
+    }
+  }
+}
+
+// Pre-configured recovery plans
+export const createRecoveryPlans = () => {
+  const recoveryManager = RecoveryManager.getInstance();
+
+  // Database corruption recovery
+  recoveryManager.registerRecoveryPlan({
+    name: 'database_corruption',
+    description: 'Recover from database corruption',
+    estimatedTime: '2-4 hours',
+    riskLevel: 'high',
+    steps: [
+      {
+        order: 1,
+        action: 'Stop application',
+        description: 'Stop all database connections',
+        command: 'sudo systemctl stop myapp',
+      },
+      {
+        order: 2,
+        action: 'Create backup',
+        description: 'Create backup of current state',
+        command: 'pg_dump --create --clean --if-exists current_db > backup_corrupted.sql',
+      },
+      {
+        order: 3,
+        action: 'Restore from backup',
+        description: 'Restore from last known good backup',
+        command: 'psql -f last_good_backup.sql',
+      },
+      {
+        order: 4,
+        action: 'Verify data',
+        description: 'Run data integrity checks',
+        command: 'psql -c "SELECT COUNT(*) FROM users;"',
+      },
+      {
+        order: 5,
+        action: 'Restart application',
+        description: 'Restart application with recovered database',
+        command: 'sudo systemctl start myapp',
+      },
+    ],
+  });
+
+  // Data loss recovery
+  recoveryManager.registerRecoveryPlan({
+    name: 'data_loss',
+    description: 'Recover from accidental data loss',
+    estimatedTime: '1-2 hours',
+    riskLevel: 'medium',
+    steps: [
+      {
+        order: 1,
+        action: 'Assess damage',
+        description: 'Identify what data was lost and when',
+      },
+      {
+        order: 2,
+        action: 'Stop writes',
+        description: 'Prevent further data loss',
+        command: 'psql -c "ALTER DATABASE mydb SET default_transaction_read_only = on;"',
+      },
+      {
+        order: 3,
+        action: 'Point-in-time recovery',
+        description: 'Recover to point before data loss',
+        command: 'pg_restore --point-in-time="2024-01-01 10:00:00" backup.sql',
+      },
+      {
+        order: 4,
+        action: 'Verify recovery',
+        description: 'Confirm data has been recovered',
+      },
+      {
+        order: 5,
+        action: 'Resume operations',
+        description: 'Re-enable database writes',
+        command: 'psql -c "ALTER DATABASE mydb SET default_transaction_read_only = off;"',
+      },
+    ],
+  });
+
+  return recoveryManager;
+};
+
+export const recoveryManager = createRecoveryPlans();
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Design schemas with normalization in mind
+- Use appropriate data types and constraints
+- Implement proper indexing strategies
+- Plan migrations carefully with rollback strategies
+- Set up automated backup and recovery procedures
+- Use transactions for data consistency
+- Monitor database performance and query execution
+- Implement soft delete patterns where appropriate
+- Use connection pooling for better performance
+- Document database schema and relationships
+
+### ❌ Don'ts
+- Don't over-normalize at the expense of performance
+- Don't create indexes without analyzing query patterns
+- Don't skip backup and recovery planning
+- Don't use raw SQL when Prisma can handle it
+- Don't ignore database constraints and validation
+- Don't forget to plan for data growth
+- Don't skip database monitoring and maintenance
+- Don't use database as a file storage system
+- Don't ignore connection limits and timeouts
+
+### 🔧 Implementation Checklist
+- [ ] Design normalized database schema
+- [ ] Implement proper indexing strategy
+- [ ] Set up Prisma with best practices
+- [ ] Create migration strategy and procedures
+- [ ] Implement backup and recovery procedures
+- [ ] Set up database monitoring and alerting
+- [ ] Optimize queries and relationships
+- [ ] Implement data validation and constraints
+- [ ] Set up connection pooling
+- [ ] Document database architecture
+- [ ] Test backup and recovery procedures
+- [ ] Plan for data growth and scaling
+- [ ] Set up automated maintenance tasks
+description:
+globs:
+alwaysApply: false
+---

@@ -1,0 +1,368 @@
+# TypeScript Best Practices
+
+## Type Definitions
+
+### Basic Types
+```tsx
+// ✅ Good: Explicit typing
+interface User {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: Date;
+  isActive: boolean;
+}
+
+// ✅ Good: Union types
+type UserRole = 'admin' | 'user' | 'moderator';
+
+// ✅ Good: Optional properties
+interface UserProfile {
+  id: string;
+  email: string;
+  name?: string;
+  avatar?: string;
+  bio?: string;
+}
+```
+
+### Component Props
+```tsx
+// ✅ Good: Typed component props
+interface ButtonProps {
+  variant?: 'primary' | 'secondary' | 'outline';
+  size?: 'sm' | 'md' | 'lg';
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  className?: string;
+}
+
+export function Button({
+  variant = 'primary',
+  size = 'md',
+  children,
+  onClick,
+  disabled = false,
+  className = '',
+  ...props
+}: ButtonProps) {
+  // Component implementation
+}
+```
+
+### API Response Types
+```tsx
+// ✅ Good: API response types
+interface ApiResponse<T> {
+  data: T;
+  message?: string;
+  success: boolean;
+}
+
+interface PaginatedResponse<T> {
+  data: T[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+// Usage
+type UsersResponse = ApiResponse<User[]>;
+type PaginatedUsersResponse = PaginatedResponse<User>;
+```
+
+## Generic Types
+
+### Reusable Components
+```tsx
+// ✅ Good: Generic list component
+interface ListProps<T> {
+  items: T[];
+  renderItem: (item: T, index: number) => React.ReactNode;
+  keyExtractor: (item: T) => string | number;
+  className?: string;
+}
+
+export function List<T>({
+  items,
+  renderItem,
+  keyExtractor,
+  className = ''
+}: ListProps<T>) {
+  return (
+    <div className={className}>
+      {items.map((item, index) => (
+        <div key={keyExtractor(item)}>
+          {renderItem(item, index)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Usage
+<List
+  items={users}
+  renderItem={(user) => <UserCard user={user} />}
+  keyExtractor={(user) => user.id}
+/>
+```
+
+### Utility Types
+```tsx
+// ✅ Good: Utility type helpers
+type PartialUser = Partial<User>;
+type UserWithoutId = Omit<User, 'id'>;
+type UserId = Pick<User, 'id'>;
+type UserKeys = keyof User;
+
+// Custom utility types
+type DeepPartial<T> = {
+  [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
+};
+
+type RequireFields<T, K extends keyof T> = T & Required<Pick<T, K>>;
+```
+
+## Error Handling
+
+### Custom Error Types
+```tsx
+// ✅ Good: Typed error handling
+class AppError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number = 500,
+    public code?: string
+  ) {
+    super(message);
+    this.name = 'AppError';
+  }
+}
+
+// Error result type
+type Result<T, E = AppError> = 
+  | { success: true; data: T }
+  | { success: false; error: E };
+
+// Usage
+async function fetchUser(id: string): Promise<Result<User>> {
+  try {
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) {
+      return {
+        success: false,
+        error: new AppError('User not found', 404, 'USER_NOT_FOUND')
+      };
+    }
+    return { success: true, data: user };
+  } catch (error) {
+    return {
+      success: false,
+      error: new AppError('Failed to fetch user', 500, 'FETCH_ERROR')
+    };
+  }
+}
+```
+
+## Async Patterns
+
+### Promise Types
+```tsx
+// ✅ Good: Typed async functions
+async function createUser(userData: CreateUserInput): Promise<User> {
+  const user = await prisma.user.create({ data: userData });
+  return user;
+}
+
+// ✅ Good: Typed API handlers
+export async function POST(request: Request): Promise<NextResponse> {
+  try {
+    const body: CreateUserInput = await request.json();
+    const user = await createUser(body);
+    return NextResponse.json(user, { status: 201 });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to create user' },
+      { status: 500 }
+    );
+  }
+}
+```
+
+### Loading States
+```tsx
+// ✅ Good: Loading state types
+type LoadingState<T> = 
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: T }
+  | { status: 'error'; error: string };
+
+// Usage in component
+function UserProfile({ userId }: { userId: string }) {
+  const [state, setState] = useState<LoadingState<User>>({ status: 'idle' });
+
+  useEffect(() => {
+    setState({ status: 'loading' });
+    fetchUser(userId)
+      .then(user => setState({ status: 'success', data: user }))
+      .catch(error => setState({ status: 'error', error: error.message }));
+  }, [userId]);
+
+  switch (state.status) {
+    case 'idle':
+      return null;
+    case 'loading':
+      return <div>Loading...</div>;
+    case 'success':
+      return <UserCard user={state.data} />;
+    case 'error':
+      return <div>Error: {state.error}</div>;
+  }
+}
+```
+
+## Form Handling
+
+### Form Types
+```tsx
+// ✅ Good: Form validation types
+interface LoginForm {
+  email: string;
+  password: string;
+}
+
+interface FormErrors {
+  [key: string]: string;
+}
+
+// Form hook with types
+function useForm<T>(initialValues: T) {
+  const [values, setValues] = useState<T>(initialValues);
+  const [errors, setErrors] = useState<FormErrors>({});
+
+  const handleChange = (field: keyof T, value: T[keyof T]) => {
+    setValues(prev => ({ ...prev, [field]: value }));
+    // Clear error when user starts typing
+    if (errors[field as string]) {
+      setErrors(prev => ({ ...prev, [field]: '' }));
+    }
+  };
+
+  const validate = (validationSchema: ValidationSchema<T>): boolean => {
+    const newErrors: FormErrors = {};
+    // Validation logic here
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  return { values, errors, handleChange, validate };
+}
+```
+
+## Database Types
+
+### Prisma Integration
+```tsx
+// ✅ Good: Prisma type extensions
+import { User, Prisma } from '@prisma/client';
+
+// Extend Prisma types
+type UserWithProfile = User & {
+  profile: {
+    bio: string;
+    avatar: string;
+  };
+};
+
+// Custom Prisma queries
+type UserCreateInput = Prisma.UserCreateInput;
+type UserUpdateInput = Prisma.UserUpdateInput;
+type UserWhereInput = Prisma.UserWhereInput;
+
+// Database service with types
+class UserService {
+  async createUser(data: UserCreateInput): Promise<User> {
+    return prisma.user.create({ data });
+  }
+
+  async updateUser(id: string, data: UserUpdateInput): Promise<User> {
+    return prisma.user.update({ where: { id }, data });
+  }
+
+  async findUsers(where: UserWhereInput): Promise<User[]> {
+    return prisma.user.findMany({ where });
+  }
+}
+```
+
+## Configuration
+
+### Environment Variables with Zod Validation
+```tsx
+// ✅ Good: Zod-validated environment variables
+import { z } from 'zod';
+
+const envSchema = z.object({
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  DATABASE_URL: z.string().url(),
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
+  VERCEL_ENV: z.enum(['development', 'preview', 'production']).optional(),
+});
+
+// Validate environment variables
+function validateEnv() {
+  try {
+    return envSchema.parse(process.env);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      const missingVars = error.errors.map(e => e.path.join('.')).join(', ');
+      throw new Error(`Missing or invalid environment variables: ${missingVars}`);
+    }
+    throw error;
+  }
+}
+
+export const env = validateEnv();
+
+// Type-safe environment access
+export type Env = z.infer<typeof envSchema>;
+```
+
+### Runtime Environment Validation
+```tsx
+// lib/env.ts
+import { z } from 'zod';
+
+const clientSchema = z.object({
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+});
+
+const serverSchema = clientSchema.extend({
+  DATABASE_URL: z.string().url(),
+  NODE_ENV: z.enum(['development', 'production', 'test']),
+});
+
+export const clientEnv = clientSchema.parse({
+  NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+});
+
+export const serverEnv = serverSchema.parse({
+  ...clientEnv,
+  DATABASE_URL: process.env.DATABASE_URL,
+  NODE_ENV: process.env.NODE_ENV,
+});
+```
+description:
+globs:
+alwaysApply: false
+---

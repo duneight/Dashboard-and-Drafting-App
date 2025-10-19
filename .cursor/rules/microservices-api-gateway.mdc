@@ -1,0 +1,1001 @@
+# Microservices & API Gateway Patterns
+
+## Microservices Architecture Strategy
+
+### Core Principles
+```tsx
+// ✅ Good: Microservices principles
+// - Single responsibility per service
+// - Independent deployment and scaling
+// - Service discovery and registration
+// - API gateway for unified access
+// - Circuit breakers for resilience
+// - Load balancing and health checks
+// - Distributed tracing and monitoring
+```
+
+### Architecture Overview
+```tsx
+// ✅ Good: Microservices architecture
+type MicroservicesArchitecture = {
+  services: {
+    user: 'user-service';
+    auth: 'auth-service';
+    content: 'content-service';
+    notification: 'notification-service';
+    payment: 'payment-service';
+  };
+  communication: 'http' | 'grpc' | 'event-driven';
+  discovery: 'consul' | 'etcd' | 'kubernetes' | 'custom';
+  gateway: 'kong' | 'nginx' | 'traefik' | 'custom';
+  monitoring: 'prometheus' | 'grafana' | 'jaeger' | 'zipkin';
+};
+```
+
+## Service Discovery
+
+### Service Registry
+```tsx
+// lib/service-discovery/registry.ts
+import { EventEmitter } from 'events';
+
+export interface ServiceInstance {
+  id: string;
+  name: string;
+  version: string;
+  host: string;
+  port: number;
+  health: 'healthy' | 'unhealthy' | 'unknown';
+  metadata: Record<string, any>;
+  lastHeartbeat: Date;
+  load: number; // CPU/memory usage
+  region: string;
+  zone: string;
+}
+
+export interface ServiceRegistration {
+  name: string;
+  version: string;
+  host: string;
+  port: number;
+  metadata?: Record<string, any>;
+  healthCheckUrl?: string;
+  region?: string;
+  zone?: string;
+}
+
+export class ServiceRegistry extends EventEmitter {
+  private services: Map<string, ServiceInstance[]> = new Map();
+  private healthCheckIntervals: Map<string, NodeJS.Timeout> = new Map();
+  private readonly healthCheckInterval = 30000; // 30 seconds
+  private readonly serviceTimeout = 90000; // 90 seconds
+
+  // Register a new service
+  async register(registration: ServiceRegistration): Promise<string> {
+    const serviceId = this.generateServiceId(registration);
+    
+    const instance: ServiceInstance = {
+      id: serviceId,
+      name: registration.name,
+      version: registration.version,
+      host: registration.host,
+      port: registration.port,
+      health: 'unknown',
+      metadata: registration.metadata || {},
+      lastHeartbeat: new Date(),
+      load: 0,
+      region: registration.region || 'default',
+      zone: registration.zone || 'default',
+    };
+
+    // Add to registry
+    if (!this.services.has(registration.name)) {
+      this.services.set(registration.name, []);
+    }
+    
+    this.services.get(registration.name)!.push(instance);
+
+    // Start health checking
+    this.startHealthCheck(instance);
+
+    // Emit registration event
+    this.emit('service:registered', instance);
+
+    console.log(`Service registered: ${registration.name} at ${registration.host}:${registration.port}`);
+    
+    return serviceId;
+  }
+
+  // Deregister a service
+  async deregister(serviceId: string): Promise<void> {
+    for (const [serviceName, instances] of this.services.entries()) {
+      const index = instances.findIndex(instance => instance.id === serviceId);
+      
+      if (index !== -1) {
+        const instance = instances[index];
+        
+        // Stop health checking
+        this.stopHealthCheck(serviceId);
+        
+        // Remove instance
+        instances.splice(index, 1);
+        
+        // Remove service if no instances remain
+        if (instances.length === 0) {
+          this.services.delete(serviceName);
+        }
+
+        // Emit deregistration event
+        this.emit('service:deregistered', instance);
+        
+        console.log(`Service deregistered: ${instance.name} (${serviceId})`);
+        return;
+      }
+    }
+  }
+
+  // Get service instances
+  getServiceInstances(serviceName: string, filters?: {
+    version?: string;
+    region?: string;
+    zone?: string;
+    healthyOnly?: boolean;
+  }): ServiceInstance[] {
+    const instances = this.services.get(serviceName) || [];
+    
+    if (!filters) return instances;
+
+    return instances.filter(instance => {
+      if (filters.version && instance.version !== filters.version) return false;
+      if (filters.region && instance.region !== filters.region) return false;
+      if (filters.zone && instance.zone !== filters.zone) return false;
+      if (filters.healthyOnly && instance.health !== 'healthy') return false;
+      return true;
+    });
+  }
+
+  // Get all services
+  getAllServices(): string[] {
+    return Array.from(this.services.keys());
+  }
+
+  // Update service health
+  updateServiceHealth(serviceId: string, health: ServiceInstance['health'], load?: number): void {
+    for (const instances of this.services.values()) {
+      const instance = instances.find(inst => inst.id === serviceId);
+      
+      if (instance) {
+        instance.health = health;
+        instance.lastHeartbeat = new Date();
+        if (load !== undefined) {
+          instance.load = load;
+        }
+        
+        this.emit('service:health:updated', instance);
+        return;
+      }
+    }
+  }
+
+  // Start health checking for a service
+  private startHealthCheck(instance: ServiceInstance): void {
+    if (!instance.metadata.healthCheckUrl) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const response = await fetch(instance.metadata.healthCheckUrl, {
+          method: 'GET',
+          timeout: 5000,
+        });
+
+        if (response.ok) {
+          this.updateServiceHealth(instance.id, 'healthy');
+        } else {
+          this.updateServiceHealth(instance.id, 'unhealthy');
+        }
+      } catch (error) {
+        this.updateServiceHealth(instance.id, 'unhealthy');
+      }
+    }, this.healthCheckInterval);
+
+    this.healthCheckIntervals.set(instance.id, interval);
+  }
+
+  // Stop health checking for a service
+  private stopHealthCheck(serviceId: string): void {
+    const interval = this.healthCheckIntervals.get(serviceId);
+    if (interval) {
+      clearInterval(interval);
+      this.healthCheckIntervals.delete(serviceId);
+    }
+  }
+
+  // Clean up stale services
+  private startCleanup(): void {
+    setInterval(() => {
+      const now = new Date();
+      
+      for (const [serviceName, instances] of this.services.entries()) {
+        const activeInstances = instances.filter(instance => {
+          const timeSinceHeartbeat = now.getTime() - instance.lastHeartbeat.getTime();
+          return timeSinceHeartbeat < this.serviceTimeout;
+        });
+
+        if (activeInstances.length !== instances.length) {
+          const removedInstances = instances.filter(instance => !activeInstances.includes(instance));
+          
+          // Remove stale instances
+          this.services.set(serviceName, activeInstances);
+          
+          // Stop health checking for removed instances
+          removedInstances.forEach(instance => {
+            this.stopHealthCheck(instance.id);
+            this.emit('service:expired', instance);
+          });
+
+          // Remove service if no instances remain
+          if (activeInstances.length === 0) {
+            this.services.delete(serviceName);
+          }
+        }
+      }
+    }, this.serviceTimeout);
+  }
+
+  // Generate unique service ID
+  private generateServiceId(registration: ServiceRegistration): string {
+    return `${registration.name}-${registration.version}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  // Initialize cleanup
+  constructor() {
+    super();
+    this.startCleanup();
+  }
+}
+
+// Global service registry instance
+export const serviceRegistry = new ServiceRegistry();
+```
+
+### Service Discovery Client
+```tsx
+// lib/service-discovery/client.ts
+import { serviceRegistry, ServiceInstance } from './registry';
+
+export class ServiceDiscoveryClient {
+  private cache: Map<string, { instances: ServiceInstance[]; lastUpdated: Date }> = new Map();
+  private readonly cacheTTL = 30000; // 30 seconds
+
+  // Discover service instances
+  async discoverService(serviceName: string, options: {
+    version?: string;
+    region?: string;
+    zone?: string;
+    healthyOnly?: boolean;
+    loadBalancing?: 'round-robin' | 'least-connections' | 'random';
+  } = {}): Promise<ServiceInstance> {
+    const { loadBalancing = 'round-robin' } = options;
+
+    // Check cache first
+    const cached = this.cache.get(serviceName);
+    if (cached && Date.now() - cached.lastUpdated.getTime() < this.cacheTTL) {
+      const instances = this.filterInstances(cached.instances, options);
+      return this.selectInstance(instances, loadBalancing);
+    }
+
+    // Get fresh instances from registry
+    const instances = serviceRegistry.getServiceInstances(serviceName, options);
+    
+    // Update cache
+    this.cache.set(serviceName, {
+      instances,
+      lastUpdated: new Date(),
+    });
+
+    if (instances.length === 0) {
+      throw new Error(`No instances found for service: ${serviceName}`);
+    }
+
+    return this.selectInstance(instances, loadBalancing);
+  }
+
+  // Filter instances based on criteria
+  private filterInstances(instances: ServiceInstance[], options: {
+    version?: string;
+    region?: string;
+    zone?: string;
+    healthyOnly?: boolean;
+  }): ServiceInstance[] {
+    return instances.filter(instance => {
+      if (options.version && instance.version !== options.version) return false;
+      if (options.region && instance.region !== options.region) return false;
+      if (options.zone && instance.zone !== options.zone) return false;
+      if (options.healthyOnly && instance.health !== 'healthy') return false;
+      return true;
+    });
+  }
+
+  // Select instance based on load balancing strategy
+  private selectInstance(instances: ServiceInstance[], strategy: string): ServiceInstance {
+    switch (strategy) {
+      case 'round-robin':
+        return this.roundRobinSelection(instances);
+      case 'least-connections':
+        return this.leastConnectionsSelection(instances);
+      case 'random':
+        return this.randomSelection(instances);
+      default:
+        return this.roundRobinSelection(instances);
+    }
+  }
+
+  // Round-robin selection
+  private roundRobinSelection(instances: ServiceInstance[]): ServiceInstance {
+    const index = Math.floor(Math.random() * instances.length);
+    return instances[index];
+  }
+
+  // Least connections selection
+  private leastConnectionsSelection(instances: ServiceInstance[]): ServiceInstance {
+    return instances.reduce((min, current) => 
+      current.load < min.load ? current : min
+    );
+  }
+
+  // Random selection
+  private randomSelection(instances: ServiceInstance[]): ServiceInstance {
+    return instances[Math.floor(Math.random() * instances.length)];
+  }
+
+  // Clear cache for a service
+  clearCache(serviceName: string): void {
+    this.cache.delete(serviceName);
+  }
+
+  // Clear all cache
+  clearAllCache(): void {
+    this.cache.clear();
+  }
+}
+
+// Global service discovery client
+export const serviceDiscovery = new ServiceDiscoveryClient();
+```
+
+## API Gateway
+
+### Gateway Implementation
+```tsx
+// lib/gateway/gateway.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { serviceDiscovery } from '@/lib/service-discovery/client';
+import { CircuitBreaker } from '@/lib/gateway/circuit-breaker';
+import { RateLimiter } from '@/lib/gateway/rate-limiter';
+import { RequestLogger } from '@/lib/gateway/request-logger';
+
+export interface RouteConfig {
+  path: string;
+  service: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+  version?: string;
+  region?: string;
+  timeout?: number;
+  rateLimit?: {
+    windowMs: number;
+    max: number;
+  };
+  circuitBreaker?: {
+    failureThreshold: number;
+    recoveryTimeout: number;
+  };
+  authentication?: boolean;
+  authorization?: string[];
+}
+
+export class APIGateway {
+  private routes: Map<string, RouteConfig> = new Map();
+  private circuitBreakers: Map<string, CircuitBreaker> = new Map();
+  private rateLimiters: Map<string, RateLimiter> = new Map();
+  private logger: RequestLogger;
+
+  constructor() {
+    this.logger = new RequestLogger();
+    this.setupDefaultRoutes();
+  }
+
+  // Add route configuration
+  addRoute(config: RouteConfig): void {
+    const routeKey = `${config.method}:${config.path}`;
+    this.routes.set(routeKey, config);
+
+    // Initialize circuit breaker if configured
+    if (config.circuitBreaker) {
+      this.circuitBreakers.set(routeKey, new CircuitBreaker(
+        config.circuitBreaker.failureThreshold,
+        config.circuitBreaker.recoveryTimeout
+      ));
+    }
+
+    // Initialize rate limiter if configured
+    if (config.rateLimit) {
+      this.rateLimiters.set(routeKey, new RateLimiter(
+        config.rateLimit.windowMs,
+        config.rateLimit.max
+      ));
+    }
+  }
+
+  // Handle incoming request
+  async handleRequest(request: NextRequest): Promise<NextResponse> {
+    const startTime = Date.now();
+    const routeKey = `${request.method}:${request.nextUrl.pathname}`;
+    const route = this.routes.get(routeKey);
+
+    if (!route) {
+      return NextResponse.json(
+        { error: 'Route not found' },
+        { status: 404 }
+      );
+    }
+
+    try {
+      // Rate limiting
+      if (this.rateLimiters.has(routeKey)) {
+        const rateLimiter = this.rateLimiters.get(routeKey)!;
+        const rateLimitResult = await rateLimiter.checkLimit(request);
+        
+        if (!rateLimitResult.allowed) {
+          return NextResponse.json(
+            { error: 'Rate limit exceeded' },
+            { status: 429, headers: rateLimitResult.headers }
+          );
+        }
+      }
+
+      // Circuit breaker check
+      if (this.circuitBreakers.has(routeKey)) {
+        const circuitBreaker = this.circuitBreakers.get(routeKey)!;
+        
+        if (!circuitBreaker.isClosed()) {
+          return NextResponse.json(
+            { error: 'Service temporarily unavailable' },
+            { status: 503 }
+          );
+        }
+      }
+
+      // Authentication check
+      if (route.authentication) {
+        const authResult = await this.authenticateRequest(request);
+        if (!authResult.authenticated) {
+          return NextResponse.json(
+            { error: 'Authentication required' },
+            { status: 401 }
+          );
+        }
+      }
+
+      // Authorization check
+      if (route.authorization && route.authorization.length > 0) {
+        const authResult = await this.authorizeRequest(request, route.authorization);
+        if (!authResult.authorized) {
+          return NextResponse.json(
+            { error: 'Insufficient permissions' },
+            { status: 403 }
+          );
+        }
+      }
+
+      // Route request to service
+      const response = await this.routeToService(request, route);
+
+      // Log successful request
+      this.logger.logRequest(request, response, Date.now() - startTime);
+
+      return response;
+    } catch (error) {
+      // Log failed request
+      this.logger.logError(request, error, Date.now() - startTime);
+
+      // Update circuit breaker on failure
+      if (this.circuitBreakers.has(routeKey)) {
+        const circuitBreaker = this.circuitBreakers.get(routeKey)!;
+        circuitBreaker.recordFailure();
+      }
+
+      return NextResponse.json(
+        { error: 'Internal server error' },
+        { status: 500 }
+      );
+    }
+  }
+
+  // Route request to appropriate service
+  private async routeToService(request: NextRequest, route: RouteConfig): Promise<NextResponse> {
+    // Discover service instance
+    const serviceInstance = await serviceDiscovery.discoverService(route.service, {
+      version: route.version,
+      region: route.region,
+      healthyOnly: true,
+    });
+
+    // Prepare request for service
+    const serviceUrl = `http://${serviceInstance.host}:${serviceInstance.port}${request.nextUrl.pathname}`;
+    const serviceRequest = new Request(serviceUrl, {
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+    });
+
+    // Add service metadata headers
+    serviceRequest.headers.set('X-Service-Instance', serviceInstance.id);
+    serviceRequest.headers.set('X-Service-Name', serviceInstance.name);
+    serviceRequest.headers.set('X-Service-Version', serviceInstance.version);
+
+    // Forward request to service
+    const response = await fetch(serviceRequest, {
+      timeout: route.timeout || 30000,
+    });
+
+    // Convert response to NextResponse
+    const responseBody = await response.text();
+    const nextResponse = new NextResponse(responseBody, {
+      status: response.status,
+      statusText: response.statusText,
+    });
+
+    // Copy headers
+    response.headers.forEach((value, key) => {
+      nextResponse.headers.set(key, value);
+    });
+
+    return nextResponse;
+  }
+
+  // Authenticate request
+  private async authenticateRequest(request: NextRequest): Promise<{ authenticated: boolean; user?: any }> {
+    const token = request.headers.get('authorization')?.replace('Bearer ', '');
+    
+    if (!token) {
+      return { authenticated: false };
+    }
+
+    try {
+      // Validate token (implement your authentication logic)
+      const user = await this.validateToken(token);
+      return { authenticated: true, user };
+    } catch (error) {
+      return { authenticated: false };
+    }
+  }
+
+  // Authorize request
+  private async authorizeRequest(request: NextRequest, requiredPermissions: string[]): Promise<{ authorized: boolean }> {
+    // Implement your authorization logic
+    // This is a simplified example
+    return { authorized: true };
+  }
+
+  // Validate token
+  private async validateToken(token: string): Promise<any> {
+    // Implement your token validation logic
+    // This is a placeholder
+    return { id: 'user-123', permissions: ['read', 'write'] };
+  }
+
+  // Setup default routes
+  private setupDefaultRoutes(): void {
+    // User service routes
+    this.addRoute({
+      path: '/api/users',
+      service: 'user-service',
+      method: 'GET',
+      authentication: true,
+      authorization: ['users:read'],
+      rateLimit: { windowMs: 60000, max: 100 },
+    });
+
+    this.addRoute({
+      path: '/api/users',
+      service: 'user-service',
+      method: 'POST',
+      authentication: true,
+      authorization: ['users:write'],
+      rateLimit: { windowMs: 60000, max: 10 },
+    });
+
+    // Auth service routes
+    this.addRoute({
+      path: '/api/auth/login',
+      service: 'auth-service',
+      method: 'POST',
+      rateLimit: { windowMs: 60000, max: 5 },
+    });
+
+    this.addRoute({
+      path: '/api/auth/register',
+      service: 'auth-service',
+      method: 'POST',
+      rateLimit: { windowMs: 60000, max: 3 },
+    });
+
+    // Content service routes
+    this.addRoute({
+      path: '/api/posts',
+      service: 'content-service',
+      method: 'GET',
+      rateLimit: { windowMs: 60000, max: 200 },
+    });
+
+    this.addRoute({
+      path: '/api/posts',
+      service: 'content-service',
+      method: 'POST',
+      authentication: true,
+      authorization: ['content:write'],
+      rateLimit: { windowMs: 60000, max: 20 },
+    });
+  }
+}
+
+// Global API gateway instance
+export const apiGateway = new APIGateway();
+```
+
+### Circuit Breaker
+```tsx
+// lib/gateway/circuit-breaker.ts
+export enum CircuitBreakerState {
+  CLOSED = 'CLOSED',
+  OPEN = 'OPEN',
+  HALF_OPEN = 'HALF_OPEN',
+}
+
+export class CircuitBreaker {
+  private state: CircuitBreakerState = CircuitBreakerState.CLOSED;
+  private failureCount: number = 0;
+  private lastFailureTime: number = 0;
+  private readonly failureThreshold: number;
+  private readonly recoveryTimeout: number;
+
+  constructor(failureThreshold: number = 5, recoveryTimeout: number = 60000) {
+    this.failureThreshold = failureThreshold;
+    this.recoveryTimeout = recoveryTimeout;
+  }
+
+  // Check if circuit breaker is closed (allowing requests)
+  isClosed(): boolean {
+    return this.state === CircuitBreakerState.CLOSED;
+  }
+
+  // Check if circuit breaker is open (blocking requests)
+  isOpen(): boolean {
+    return this.state === CircuitBreakerState.OPEN;
+  }
+
+  // Check if circuit breaker is half-open (testing recovery)
+  isHalfOpen(): boolean {
+    return this.state === CircuitBreakerState.HALF_OPEN;
+  }
+
+  // Record a successful request
+  recordSuccess(): void {
+    this.failureCount = 0;
+    this.state = CircuitBreakerState.CLOSED;
+  }
+
+  // Record a failed request
+  recordFailure(): void {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+
+    if (this.failureCount >= this.failureThreshold) {
+      this.state = CircuitBreakerState.OPEN;
+    }
+  }
+
+  // Check if circuit breaker should transition to half-open
+  shouldAttemptReset(): boolean {
+    if (this.state !== CircuitBreakerState.OPEN) {
+      return false;
+    }
+
+    const timeSinceLastFailure = Date.now() - this.lastFailureTime;
+    return timeSinceLastFailure >= this.recoveryTimeout;
+  }
+
+  // Attempt to reset circuit breaker
+  attemptReset(): void {
+    if (this.shouldAttemptReset()) {
+      this.state = CircuitBreakerState.HALF_OPEN;
+    }
+  }
+
+  // Get current state
+  getState(): CircuitBreakerState {
+    return this.state;
+  }
+
+  // Get failure count
+  getFailureCount(): number {
+    return this.failureCount;
+  }
+
+  // Get time since last failure
+  getTimeSinceLastFailure(): number {
+    return Date.now() - this.lastFailureTime;
+  }
+
+  // Reset circuit breaker manually
+  reset(): void {
+    this.state = CircuitBreakerState.CLOSED;
+    this.failureCount = 0;
+    this.lastFailureTime = 0;
+  }
+}
+```
+
+### Rate Limiter
+```tsx
+// lib/gateway/rate-limiter.ts
+export interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  reset: number;
+  headers: Record<string, string>;
+}
+
+export class RateLimiter {
+  private requests: Map<string, number[]> = new Map();
+  private readonly windowMs: number;
+  private readonly max: number;
+
+  constructor(windowMs: number, max: number) {
+    this.windowMs = windowMs;
+    this.max = max;
+  }
+
+  // Check if request is allowed
+  async checkLimit(request: Request): Promise<RateLimitResult> {
+    const key = this.getClientKey(request);
+    const now = Date.now();
+    const windowStart = now - this.windowMs;
+
+    // Get existing requests for this client
+    const clientRequests = this.requests.get(key) || [];
+    
+    // Filter out expired requests
+    const activeRequests = clientRequests.filter(timestamp => timestamp > windowStart);
+    
+    // Check if limit exceeded
+    if (activeRequests.length >= this.max) {
+      const oldestRequest = activeRequests[0];
+      const resetTime = oldestRequest + this.windowMs;
+
+      return {
+        allowed: false,
+        remaining: 0,
+        reset: resetTime,
+        headers: {
+          'X-RateLimit-Limit': this.max.toString(),
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset': resetTime.toString(),
+          'Retry-After': Math.ceil((resetTime - now) / 1000).toString(),
+        },
+      };
+    }
+
+    // Add current request
+    activeRequests.push(now);
+    this.requests.set(key, activeRequests);
+
+    const remaining = this.max - activeRequests.length;
+    const resetTime = now + this.windowMs;
+
+    return {
+      allowed: true,
+      remaining,
+      reset: resetTime,
+      headers: {
+        'X-RateLimit-Limit': this.max.toString(),
+        'X-RateLimit-Remaining': remaining.toString(),
+        'X-RateLimit-Reset': resetTime.toString(),
+      },
+    };
+  }
+
+  // Get client identifier for rate limiting
+  private getClientKey(request: Request): string {
+    // Use IP address as default key
+    // In production, you might want to use user ID, API key, etc.
+    const forwardedFor = request.headers.get('X-Forwarded-For');
+    const realIp = request.headers.get('X-Real-IP');
+    const ip = forwardedFor?.split(',')[0] || realIp || 'unknown';
+    
+    return ip;
+  }
+
+  // Clean up expired entries
+  cleanup(): void {
+    const now = Date.now();
+    const windowStart = now - this.windowMs;
+
+    for (const [key, requests] of this.requests.entries()) {
+      const activeRequests = requests.filter(timestamp => timestamp > windowStart);
+      
+      if (activeRequests.length === 0) {
+        this.requests.delete(key);
+      } else {
+        this.requests.set(key, activeRequests);
+      }
+    }
+  }
+
+  // Start cleanup interval
+  startCleanup(): void {
+    setInterval(() => {
+      this.cleanup();
+    }, this.windowMs);
+  }
+}
+```
+
+## Load Balancing Strategies
+
+### Load Balancer
+```tsx
+// lib/load-balancer/load-balancer.ts
+import { ServiceInstance } from '@/lib/service-discovery/registry';
+
+export interface LoadBalancingStrategy {
+  name: string;
+  selectInstance(instances: ServiceInstance[]): ServiceInstance;
+}
+
+export class RoundRobinStrategy implements LoadBalancingStrategy {
+  name = 'round-robin';
+  private currentIndex = 0;
+
+  selectInstance(instances: ServiceInstance[]): ServiceInstance {
+    if (instances.length === 0) {
+      throw new Error('No instances available');
+    }
+
+    const instance = instances[this.currentIndex];
+    this.currentIndex = (this.currentIndex + 1) % instances.length;
+    
+    return instance;
+  }
+}
+
+export class LeastConnectionsStrategy implements LoadBalancingStrategy {
+  name = 'least-connections';
+
+  selectInstance(instances: ServiceInstance[]): ServiceInstance {
+    if (instances.length === 0) {
+      throw new Error('No instances available');
+    }
+
+    return instances.reduce((min, current) => 
+      current.load < min.load ? current : min
+    );
+  }
+}
+
+export class WeightedRoundRobinStrategy implements LoadBalancingStrategy {
+  name = 'weighted-round-robin';
+  private currentIndex = 0;
+  private currentWeight = 0;
+
+  selectInstance(instances: ServiceInstance[]): ServiceInstance {
+    if (instances.length === 0) {
+      throw new Error('No instances available');
+    }
+
+    while (true) {
+      const instance = instances[this.currentIndex];
+      
+      if (this.currentWeight < (instance.metadata.weight || 1)) {
+        this.currentWeight++;
+        return instance;
+      }
+
+      this.currentWeight = 0;
+      this.currentIndex = (this.currentIndex + 1) % instances.length;
+    }
+  }
+}
+
+export class RandomStrategy implements LoadBalancingStrategy {
+  name = 'random';
+
+  selectInstance(instances: ServiceInstance[]): ServiceInstance {
+    if (instances.length === 0) {
+      throw new Error('No instances available');
+    }
+
+    const index = Math.floor(Math.random() * instances.length);
+    return instances[index];
+  }
+}
+
+export class LoadBalancer {
+  private strategies: Map<string, LoadBalancingStrategy> = new Map();
+  private defaultStrategy: LoadBalancingStrategy;
+
+  constructor() {
+    // Register default strategies
+    this.strategies.set('round-robin', new RoundRobinStrategy());
+    this.strategies.set('least-connections', new LeastConnectionsStrategy());
+    this.strategies.set('weighted-round-robin', new WeightedRoundRobinStrategy());
+    this.strategies.set('random', new RandomStrategy());
+
+    this.defaultStrategy = this.strategies.get('round-robin')!;
+  }
+
+  // Register custom strategy
+  registerStrategy(strategy: LoadBalancingStrategy): void {
+    this.strategies.set(strategy.name, strategy);
+  }
+
+  // Select instance using specified strategy
+  selectInstance(instances: ServiceInstance[], strategyName?: string): ServiceInstance {
+    const strategy = strategyName ? this.strategies.get(strategyName) : this.defaultStrategy;
+    
+    if (!strategy) {
+      throw new Error(`Unknown load balancing strategy: ${strategyName}`);
+    }
+
+    return strategy.selectInstance(instances);
+  }
+
+  // Get available strategies
+  getAvailableStrategies(): string[] {
+    return Array.from(this.strategies.keys());
+  }
+}
+
+// Global load balancer instance
+export const loadBalancer = new LoadBalancer();
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Implement service discovery and registration
+- Use API gateway for unified access
+- Implement circuit breakers for resilience
+- Use appropriate load balancing strategies
+- Monitor service health and performance
+- Implement rate limiting and throttling
+- Use distributed tracing for debugging
+- Implement proper error handling and fallbacks
+
+### ❌ Don'ts
+- Don't forget to handle service failures
+- Don't ignore circuit breaker patterns
+- Don't skip health checks
+- Don't forget to monitor service dependencies
+- Don't ignore rate limiting
+- Don't skip distributed tracing
+
+### 🔧 Implementation Checklist
+- [ ] Set up service discovery and registry
+- [ ] Implement API gateway
+- [ ] Add circuit breakers
+- [ ] Implement load balancing
+- [ ] Set up rate limiting
+- [ ] Add health checks
+- [ ] Implement monitoring and alerting
+- [ ] Set up distributed tracing
+- [ ] Test failure scenarios
+- [ ] Monitor performance metrics
+description:
+globs:
+alwaysApply: false
+---
+description:
+globs:
+alwaysApply: false
+---

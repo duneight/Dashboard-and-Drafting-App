@@ -1,0 +1,712 @@
+# Performance & Optimization Best Practices
+
+## React Performance Patterns
+
+### Memoization Strategies
+```tsx
+// ✅ Good: Use React.memo for expensive components
+import { memo, useMemo, useCallback } from 'react';
+
+interface UserListProps {
+  users: User[];
+  onUserSelect: (user: User) => void;
+  searchTerm: string;
+}
+
+export const UserList = memo<UserListProps>(({ users, onUserSelect, searchTerm }) => {
+  // Memoize filtered users to prevent recalculation
+  const filteredUsers = useMemo(() => {
+    return users.filter(user => 
+      user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.email.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [users, searchTerm]);
+
+  // Memoize callback to prevent child re-renders
+  const handleUserSelect = useCallback((user: User) => {
+    onUserSelect(user);
+  }, [onUserSelect]);
+
+  return (
+    <div className="space-y-2">
+      {filteredUsers.map(user => (
+        <UserItem 
+          key={user.id} 
+          user={user} 
+          onSelect={handleUserSelect}
+        />
+      ))}
+    </div>
+  );
+});
+
+UserList.displayName = 'UserList';
+
+// ✅ Good: Memoize expensive calculations
+export function ExpensiveChart({ data, width, height }: ChartProps) {
+  const chartData = useMemo(() => {
+    return processChartData(data, width, height);
+  }, [data, width, height]);
+
+  const chartOptions = useMemo(() => {
+    return {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'top' as const },
+        title: { display: true, text: 'Performance Metrics' }
+      }
+    };
+  }, []);
+
+  return (
+    <div style={{ width, height }}>
+      <Chart data={chartData} options={chartOptions} />
+    </div>
+  );
+}
+```
+
+### Lazy Loading & Code Splitting
+```tsx
+// ✅ Good: Lazy load heavy components
+import { lazy, Suspense } from 'react';
+
+const HeavyChart = lazy(() => import('./HeavyChart'));
+const DataTable = lazy(() => import('./DataTable'));
+const Analytics = lazy(() => import('./Analytics'));
+
+export function Dashboard() {
+  return (
+    <div className="space-y-6">
+      <Suspense fallback={<ChartSkeleton />}>
+        <HeavyChart />
+      </Suspense>
+      
+      <Suspense fallback={<TableSkeleton />}>
+        <DataTable />
+      </Suspense>
+      
+      <Suspense fallback={<AnalyticsSkeleton />}>
+        <Analytics />
+      </Suspense>
+    </div>
+  );
+}
+
+// ✅ Good: Route-based code splitting
+const UserProfile = lazy(() => import('./UserProfile'));
+const Settings = lazy(() => import('./Settings'));
+const Billing = lazy(() => import('./Billing'));
+
+export function UserDashboard() {
+  const [activeTab, setActiveTab] = useState('profile');
+  
+  const renderTab = () => {
+    switch (activeTab) {
+      case 'profile':
+        return (
+          <Suspense fallback={<ProfileSkeleton />}>
+            <UserProfile />
+          </Suspense>
+        );
+      case 'settings':
+        return (
+          <Suspense fallback={<SettingsSkeleton />}>
+            <Settings />
+          </Suspense>
+        );
+      case 'billing':
+        return (
+          <Suspense fallback={<BillingSkeleton />}>
+            <Billing />
+          </Suspense>
+        );
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div>
+      <TabNavigation activeTab={activeTab} onTabChange={setActiveTab} />
+      {renderTab()}
+    </div>
+  );
+}
+```
+
+### Virtual Scrolling for Large Lists
+```tsx
+// ✅ Good: Virtual scrolling for performance
+import { FixedSizeList as List } from 'react-window';
+import { useVirtualizer } from '@tanstack/react-virtual';
+
+interface VirtualListProps {
+  items: any[];
+  height: number;
+  itemHeight: number;
+}
+
+export function VirtualList({ items, height, itemHeight }: VirtualListProps) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => itemHeight,
+    overscan: 5,
+  });
+
+  return (
+    <div
+      ref={parentRef}
+      style={{
+        height,
+        overflow: 'auto',
+      }}
+    >
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => (
+          <div
+            key={virtualItem.key}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: `${virtualItem.size}px`,
+              transform: `translateY(${virtualItem.start}px)`,
+            }}
+          >
+            <ListItem item={items[virtualItem.index]} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+## Bundle Optimization
+
+### Dynamic Imports & Tree Shaking
+```tsx
+// ✅ Good: Dynamic imports for conditional features
+export function FeatureToggle({ feature, children }: FeatureToggleProps) {
+  const [FeatureComponent, setFeatureComponent] = useState<React.ComponentType | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (feature && !FeatureComponent) {
+      setIsLoading(true);
+      
+      // Dynamic import based on feature
+      import(`./features/${feature}`)
+        .then(module => {
+          setFeatureComponent(() => module.default);
+        })
+        .catch(error => {
+          console.error(`Failed to load feature: ${feature}`, error);
+        })
+        .finally(() => {
+          setIsLoading(false);
+        });
+    }
+  }, [feature, FeatureComponent]);
+
+  if (isLoading) {
+    return <FeatureSkeleton />;
+  }
+
+  if (!FeatureComponent) {
+    return null;
+  }
+
+  return <FeatureComponent>{children}</FeatureComponent>;
+}
+
+// ✅ Good: Tree-shakeable utilities
+export const utils = {
+  formatDate: (date: Date) => date.toLocaleDateString(),
+  formatCurrency: (amount: number) => `$${amount.toFixed(2)}`,
+  slugify: (text: string) => text.toLowerCase().replace(/\s+/g, '-'),
+} as const;
+
+// Only import what you need
+import { formatDate, formatCurrency } from '@/lib/utils';
+```
+
+### Bundle Analysis & Optimization
+```json
+// next.config.js
+const withBundleAnalyzer = require('@next/bundle-analyzer')({
+  enabled: process.env.ANALYZE === 'true',
+});
+
+module.exports = withBundleAnalyzer({
+  experimental: {
+    optimizeCss: true,
+    optimizePackageImports: ['@mui/material', '@mui/icons-material', 'lodash'],
+  },
+  webpack: (config, { dev, isServer }) => {
+    // Optimize bundle size
+    if (!dev && !isServer) {
+      config.optimization.splitChunks = {
+        chunks: 'all',
+        cacheGroups: {
+          vendor: {
+            test: /[\\/]node_modules[\\/]/,
+            name: 'vendors',
+            chunks: 'all',
+          },
+          common: {
+            name: 'common',
+            minChunks: 2,
+            chunks: 'all',
+            enforce: true,
+          },
+        },
+      };
+    }
+    
+    return config;
+  },
+});
+```
+
+## Image & Asset Optimization
+
+### Next.js Image Optimization
+```tsx
+// ✅ Good: Optimized images with proper sizing
+import Image from 'next/image';
+
+export function OptimizedImage({ src, alt, width, height, priority = false }: ImageProps) {
+  return (
+    <Image
+      src={src}
+      alt={alt}
+      width={width}
+      height={height}
+      priority={priority}
+      placeholder="blur"
+      blurDataURL="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAv/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAAAAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCdABmX/9k="
+      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+      className="object-cover"
+    />
+  );
+}
+
+// ✅ Good: Responsive images with art direction
+export function ResponsiveImage({ mobileSrc, desktopSrc, alt }: ResponsiveImageProps) {
+  return (
+    <picture>
+      <source media="(min-width: 768px)" srcSet={desktopSrc} />
+      <Image
+        src={mobileSrc}
+        alt={alt}
+        width={400}
+        height={300}
+        className="w-full h-auto"
+      />
+    </picture>
+  );
+}
+
+// ✅ Good: Lazy loading with intersection observer
+export function LazyImage({ src, alt, width, height }: LazyImageProps) {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isInView, setIsInView] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (imgRef.current) {
+      observer.observe(imgRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={imgRef} className="relative">
+      {!isLoaded && isInView && (
+        <div className="absolute inset-0 bg-gray-200 animate-pulse" />
+      )}
+      {isInView && (
+        <Image
+          src={src}
+          alt={alt}
+          width={width}
+          height={height}
+          onLoad={() => setIsLoaded(true)}
+          className={`transition-opacity duration-300 ${
+            isLoaded ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+      )}
+    </div>
+  );
+}
+```
+
+### Font Optimization
+```tsx
+// ✅ Good: Optimized font loading
+import { Inter, Roboto_Mono } from 'next/font/google';
+
+const inter = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-inter',
+  preload: true,
+});
+
+const robotoMono = Roboto_Mono({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-roboto-mono',
+  preload: false, // Only load when needed
+});
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en" className={`${inter.variable} ${robotoMono.variable}`}>
+      <body className="font-sans antialiased">
+        {children}
+      </body>
+    </html>
+  );
+}
+
+// ✅ Good: CSS variables for font usage
+// globals.css
+:root {
+  --font-inter: 'Inter', sans-serif;
+  --font-roboto-mono: 'Roboto Mono', monospace;
+}
+
+.font-sans {
+  font-family: var(--font-inter);
+}
+
+.font-mono {
+  font-family: var(--font-roboto-mono);
+}
+```
+
+## Caching Strategies
+
+### SWR for Data Fetching
+```tsx
+// ✅ Good: SWR with caching and revalidation
+import useSWR, { mutate } from 'swr';
+
+const fetcher = (url: string) => fetch(url).then(res => res.json());
+
+export function useUserData(userId: string) {
+  const { data, error, isLoading, mutate: revalidate } = useSWR(
+    userId ? `/api/users/${userId}` : null,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: true,
+      dedupingInterval: 60000, // 1 minute
+      errorRetryCount: 3,
+      errorRetryInterval: 5000,
+    }
+  );
+
+  const updateUser = async (updates: Partial<User>) => {
+    try {
+      const response = await fetch(`/api/users/${userId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      
+      if (response.ok) {
+        // Optimistic update
+        revalidate();
+        // Update cache immediately
+        mutate(`/api/users/${userId}`, { ...data, ...updates }, false);
+      }
+    } catch (error) {
+      console.error('Failed to update user:', error);
+    }
+  };
+
+  return {
+    user: data,
+    isLoading,
+    error,
+    updateUser,
+    revalidate,
+  };
+}
+
+// ✅ Good: SWR with infinite loading
+export function useInfiniteUsers(searchTerm: string) {
+  const { data, error, isLoading, size, setSize, mutate } = useSWRInfinite(
+    (index) => `/api/users?search=${searchTerm}&page=${index + 1}&limit=20`,
+    fetcher,
+    {
+      revalidateFirstPage: false,
+      revalidateAll: false,
+    }
+  );
+
+  const users = data ? data.flatMap(page => page.users) : [];
+  const hasMore = data && data[data.length - 1]?.hasMore;
+  const isLoadingMore = isLoading || (size > 0 && data && typeof data[size - 1] === 'undefined');
+
+  const loadMore = () => {
+    if (!isLoadingMore && hasMore) {
+      setSize(size + 1);
+    }
+  };
+
+  return {
+    users,
+    isLoading,
+    isLoadingMore,
+    error,
+    hasMore,
+    loadMore,
+    mutate,
+  };
+}
+```
+
+### React Query for Server State
+```tsx
+// ✅ Good: React Query with optimistic updates
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+
+export function useUser(userId: string) {
+  const queryClient = useQueryClient();
+  
+  const { data: user, isLoading, error } = useQuery({
+    queryKey: ['user', userId],
+    queryFn: () => fetchUser(userId),
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    gcTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  const updateUserMutation = useMutation({
+    mutationFn: (updates: Partial<User>) => updateUser(userId, updates),
+    onMutate: async (updates) => {
+      // Cancel outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ['user', userId] });
+      
+      // Snapshot previous value
+      const previousUser = queryClient.getQueryData(['user', userId]);
+      
+      // Optimistically update
+      queryClient.setQueryData(['user', userId], (old: User | undefined) => 
+        old ? { ...old, ...updates } : undefined
+      );
+      
+      return { previousUser };
+    },
+    onError: (err, updates, context) => {
+      // Rollback on error
+      if (context?.previousUser) {
+        queryClient.setQueryData(['user', userId], context.previousUser);
+      }
+    },
+    onSettled: () => {
+      // Refetch after mutation
+      queryClient.invalidateQueries({ queryKey: ['user', userId] });
+    },
+  });
+
+  return {
+    user,
+    isLoading,
+    error,
+    updateUser: updateUserMutation.mutate,
+    isUpdating: updateUserMutation.isPending,
+  };
+}
+```
+
+## Performance Monitoring
+
+### Core Web Vitals
+```tsx
+// ✅ Good: Core Web Vitals monitoring
+import { getCLS, getFID, getFCP, getLCP, getTTFB } from 'web-vitals';
+
+export function reportWebVitals() {
+  getCLS(console.log);
+  getFID(console.log);
+  getFCP(console.log);
+  getLCP(console.log);
+  getTTFB(console.log);
+}
+
+// ✅ Good: Custom performance metrics
+export function measurePerformance(metricName: string, value: number) {
+  if (typeof window !== 'undefined' && 'performance' in window) {
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+    
+    // Send to analytics
+    if (window.gtag) {
+      window.gtag('event', 'performance', {
+        event_category: 'Web Vitals',
+        event_label: metricName,
+        value: Math.round(value),
+        non_interaction: true,
+      });
+    }
+  }
+}
+
+// ✅ Good: Performance observer for long tasks
+export function observeLongTasks() {
+  if (typeof window !== 'undefined' && 'PerformanceObserver' in window) {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.duration > 50) { // 50ms threshold
+          console.warn('Long task detected:', entry);
+          // Send to monitoring service
+        }
+      }
+    });
+    
+    observer.observe({ entryTypes: ['longtask'] });
+  }
+}
+```
+
+### Bundle Size Monitoring
+```tsx
+// ✅ Good: Bundle size monitoring
+export function getBundleSize() {
+  if (typeof window !== 'undefined' && 'performance' in window) {
+    const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+    
+    return {
+      totalSize: navigation.transferSize,
+      decodedSize: navigation.decodedBodySize,
+      encodedSize: navigation.encodedBodySize,
+      domContentLoaded: navigation.domContentLoadedEventEnd - navigation.domContentLoadedEventStart,
+      loadComplete: navigation.loadEventEnd - navigation.loadEventStart,
+    };
+  }
+  
+  return null;
+}
+
+// ✅ Good: Resource timing
+export function getResourceTiming() {
+  if (typeof window !== 'undefined' && 'performance' in window) {
+    const resources = performance.getEntriesByType('resource');
+    
+    return resources.map(resource => ({
+      name: resource.name,
+      duration: resource.duration,
+      size: resource.transferSize,
+      type: resource.initiatorType,
+    }));
+  }
+  
+  return [];
+}
+```
+
+## Memory Management
+
+### Memory Leak Prevention
+```tsx
+// ✅ Good: Cleanup subscriptions and timers
+export function useSubscription<T>(subscribe: (callback: (data: T) => void) => () => void) {
+  const [data, setData] = useState<T | null>(null);
+  
+  useEffect(() => {
+    const unsubscribe = subscribe(setData);
+    
+    return () => {
+      unsubscribe();
+    };
+  }, [subscribe]);
+  
+  return data;
+}
+
+// ✅ Good: Debounced functions
+export function useDebounce<T>(value: T, delay: number): T {
+  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+  
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+    
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+  
+  return debouncedValue;
+}
+
+// ✅ Good: Throttled functions
+export function useThrottle<T>(value: T, delay: number): T {
+  const [throttledValue, setThrottledValue] = useState<T>(value);
+  const lastRun = useRef<number>(Date.now());
+  
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (Date.now() - lastRun.current >= delay) {
+        setThrottledValue(value);
+        lastRun.current = Date.now();
+      }
+    }, delay - (Date.now() - lastRun.current));
+    
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+  
+  return throttledValue;
+}
+```
+
+This comprehensive performance optimization guide covers:
+- React performance patterns (memoization, lazy loading)
+- Bundle optimization and code splitting
+- Image and asset optimization
+- Caching strategies (SWR, React Query)
+- Performance monitoring and metrics
+- Memory management and leak prevention
+- Core Web Vitals optimization
+description:
+globs:
+alwaysApply: false
+---
+description:
+globs:
+alwaysApply: false
+---

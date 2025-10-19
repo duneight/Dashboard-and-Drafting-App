@@ -1,0 +1,679 @@
+# Accessibility (A11y) Best Practices
+
+## Accessibility Standards
+
+### WCAG 2.1 Compliance
+```tsx
+// ✅ Good: Follow WCAG 2.1 AA standards
+// - Perceivable: Content must be perceivable to users
+// - Operable: Interface must be operable by users
+// - Understandable: Content must be understandable
+// - Robust: Content must be robust enough for assistive technologies
+```
+
+### Accessibility Testing Tools
+```tsx
+// ✅ Good: Use multiple testing approaches
+// - Automated: axe-core, Lighthouse, ESLint-plugin-jsx-a11y
+// - Manual: Keyboard navigation, screen reader testing
+// - User testing: People with disabilities
+// - Browser dev tools: Accessibility inspector
+```
+
+## Semantic HTML
+
+### Proper HTML Structure
+```tsx
+// ✅ Good: Use semantic HTML elements
+export function ArticleLayout({ title, content, author }: ArticleProps) {
+  return (
+    <article>
+      <header>
+        <h1>{title}</h1>
+        <address>
+          <span>By </span>
+          <a href={`/authors/${author.id}`}>{author.name}</a>
+        </address>
+        <time dateTime={author.publishedAt}>
+          {formatDate(author.publishedAt)}
+        </time>
+      </header>
+      
+      <main>
+        <section>{content}</section>
+      </main>
+      
+      <footer>
+        <nav aria-label="Article navigation">
+          <ul>
+            <li><a href="/articles">All Articles</a></li>
+            <li><a href="/categories">Categories</a></li>
+          </ul>
+        </nav>
+      </footer>
+    </article>
+  );
+}
+
+// ❌ Bad: Using div for everything
+export function BadArticleLayout({ title, content }: ArticleProps) {
+  return (
+    <div>
+      <div>
+        <div>{title}</div>
+        <div>By {author.name}</div>
+      </div>
+      <div>{content}</div>
+    </div>
+  );
+}
+```
+
+### Form Accessibility
+```tsx
+// ✅ Good: Proper form labeling and structure
+export function AccessibleForm() {
+  return (
+    <form onSubmit={handleSubmit}>
+      <fieldset>
+        <legend>Personal Information</legend>
+        
+        <div>
+          <label htmlFor="firstName">First Name</label>
+          <input
+            id="firstName"
+            name="firstName"
+            type="text"
+            required
+            aria-describedby="firstName-help"
+            aria-invalid={errors.firstName ? 'true' : 'false'}
+          />
+          {errors.firstName && (
+            <div id="firstName-help" role="alert" aria-live="polite">
+              {errors.firstName}
+            </div>
+          )}
+        </div>
+        
+        <div>
+          <label htmlFor="email">Email Address</label>
+          <input
+            id="email"
+            name="email"
+            type="email"
+            required
+            aria-describedby="email-help"
+            aria-invalid={errors.email ? 'true' : 'false'}
+          />
+          <div id="email-help" className="help-text">
+            We'll never share your email with anyone else.
+          </div>
+        </div>
+      </fieldset>
+      
+      <button type="submit" aria-describedby="submit-help">
+        Submit Application
+      </button>
+      <div id="submit-help" className="sr-only">
+        Click to submit your application form
+      </div>
+    </form>
+  );
+}
+```
+
+## ARIA Labels and Roles
+
+### ARIA Labels
+```tsx
+// ✅ Good: Descriptive ARIA labels
+export function SearchComponent() {
+  return (
+    <div>
+      <label htmlFor="search" className="sr-only">
+        Search articles and content
+      </label>
+      <input
+        id="search"
+        type="search"
+        placeholder="Search..."
+        aria-label="Search articles and content"
+        aria-describedby="search-results"
+      />
+      <button
+        type="submit"
+        aria-label="Submit search query"
+        aria-describedby="search-results"
+      >
+        <SearchIcon aria-hidden="true" />
+      </button>
+      
+      <div id="search-results" aria-live="polite" aria-atomic="false">
+        {/* Search results */}
+      </div>
+    </div>
+  );
+}
+
+// ✅ Good: Dynamic ARIA labels
+export function Pagination({ currentPage, totalPages }: PaginationProps) {
+  const getPageLabel = (page: number) => {
+    if (page === currentPage) {
+      return `Current page, page ${page} of ${totalPages}`;
+    }
+    return `Go to page ${page} of ${totalPages}`;
+  };
+
+  return (
+    <nav aria-label="Pagination navigation">
+      <ul>
+        {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+          <li key={page}>
+            <a
+              href={`?page=${page}`}
+              aria-label={getPageLabel(page)}
+              aria-current={page === currentPage ? 'page' : undefined}
+            >
+              {page}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+```
+
+### ARIA Roles
+```tsx
+// ✅ Good: Proper ARIA roles
+export function Modal({ isOpen, onClose, title, children }: ModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+      aria-describedby="modal-description"
+    >
+      <div className="modal-content" role="document">
+        <header>
+          <h2 id="modal-title">{title}</h2>
+          <button
+            onClick={onClose}
+            aria-label="Close modal"
+            aria-describedby="modal-title"
+          >
+            ×
+          </button>
+        </header>
+        
+        <div id="modal-description">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ✅ Good: ARIA live regions
+export function NotificationSystem() {
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+
+  return (
+    <div>
+      {/* Toast notifications */}
+      <div
+        aria-live="polite"
+        aria-atomic="false"
+        className="toast-container"
+      >
+        {notifications.map((notification) => (
+          <div
+            key={notification.id}
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+          >
+            {notification.message}
+          </div>
+        ))}
+      </div>
+      
+      {/* Status updates */}
+      <div
+        aria-live="polite"
+        aria-atomic="true"
+        className="status-updates"
+      >
+        {/* Status messages */}
+      </div>
+    </div>
+  );
+}
+```
+
+## Keyboard Navigation
+
+### Focus Management
+```tsx
+// ✅ Good: Proper focus management
+export function FocusTrap({ children }: { children: React.ReactNode }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    // Store the previously focused element
+    previousFocus.current = document.activeElement as HTMLElement;
+    
+    // Focus the first focusable element in the trap
+    const focusableElements = containerRef.current?.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    
+    if (focusableElements && focusableElements.length > 0) {
+      (focusableElements[0] as HTMLElement).focus();
+    }
+
+    return () => {
+      // Restore focus when component unmounts
+      if (previousFocus.current) {
+        previousFocus.current.focus();
+      }
+    };
+  }, []);
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Tab') {
+      const focusableElements = containerRef.current?.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      
+      if (!focusableElements) return;
+      
+      const firstElement = focusableElements[0] as HTMLElement;
+      const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+      
+      if (e.shiftKey) {
+        if (document.activeElement === firstElement) {
+          e.preventDefault();
+          lastElement.focus();
+        }
+      } else {
+        if (document.activeElement === lastElement) {
+          e.preventDefault();
+          firstElement.focus();
+        }
+      }
+    }
+  };
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  return (
+    <div ref={containerRef} tabIndex={-1}>
+      {children}
+    </div>
+  );
+}
+```
+
+### Skip Links
+```tsx
+// ✅ Good: Skip navigation links
+export function SkipLinks() {
+  return (
+    <>
+      <a
+        href="#main-content"
+        className="skip-link"
+        aria-label="Skip to main content"
+      >
+        Skip to main content
+      </a>
+      <a
+        href="#navigation"
+        className="skip-link"
+        aria-label="Skip to navigation"
+      >
+        Skip to navigation
+      </a>
+      <a
+        href="#footer"
+        className="skip-link"
+        aria-label="Skip to footer"
+      >
+        Skip to footer
+      </a>
+    </>
+  );
+}
+
+// CSS for skip links
+const skipLinkStyles = `
+  .skip-link {
+    position: absolute;
+    top: -40px;
+    left: 6px;
+    background: #000;
+    color: #fff;
+    padding: 8px;
+    text-decoration: none;
+    z-index: 1000;
+    transition: top 0.3s;
+  }
+  
+  .skip-link:focus {
+    top: 6px;
+  }
+`;
+```
+
+## Screen Reader Support
+
+### Screen Reader Only Content
+```tsx
+// ✅ Good: Screen reader only content
+export function ScreenReaderOnly({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="sr-only">
+      {children}
+    </span>
+  );
+}
+
+// CSS for screen reader only
+const srOnlyStyles = `
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+`;
+
+// ✅ Good: Contextual screen reader text
+export function Button({ children, icon, ...props }: ButtonProps) {
+  return (
+    <button {...props}>
+      {icon && <span className="sr-only">{icon.description}</span>}
+      {children}
+    </button>
+  );
+}
+
+export function IconButton({ icon, label, ...props }: IconButtonProps) {
+  return (
+    <button
+      {...props}
+      aria-label={label}
+      aria-describedby={`${props.id}-description`}
+    >
+      <icon.component aria-hidden="true" />
+      <span id={`${props.id}-description`} className="sr-only">
+        {label}
+      </span>
+    </button>
+  );
+}
+```
+
+### ARIA Descriptions
+```tsx
+// ✅ Good: Descriptive ARIA descriptions
+export function DataTable({ data, columns }: DataTableProps) {
+  return (
+    <div>
+      <table
+        role="table"
+        aria-label="User data table"
+        aria-describedby="table-description"
+      >
+        <caption id="table-description">
+          Table showing user information including name, email, role, and status.
+          Use the search and filter options to find specific users.
+        </caption>
+        
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th
+                key={column.key}
+                scope="col"
+                aria-sort={column.sortable ? 'none' : undefined}
+              >
+                {column.label}
+                {column.sortable && (
+                  <button
+                    aria-label={`Sort by ${column.label}`}
+                    aria-describedby={`${column.key}-sort-desc`}
+                  >
+                    ↕
+                  </button>
+                )}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        
+        <tbody>
+          {data.map((row, index) => (
+            <tr key={row.id}>
+              {columns.map((column) => (
+                <td key={column.key}>
+                  {row[column.key]}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+```
+
+## Color and Contrast
+
+### Color Contrast Requirements
+```tsx
+// ✅ Good: Ensure sufficient color contrast
+// - Normal text: 4.5:1 contrast ratio
+// - Large text: 3:1 contrast ratio
+// - UI components: 3:1 contrast ratio
+
+export function ColorContrastExample() {
+  return (
+    <div>
+      {/* ✅ Good: High contrast text */}
+      <p className="text-high-contrast">
+        This text has sufficient contrast (4.5:1)
+      </p>
+      
+      {/* ✅ Good: Large text with lower contrast requirement */}
+      <h1 className="text-large-high-contrast">
+        Large heading with 3:1 contrast
+      </h1>
+      
+      {/* ❌ Bad: Low contrast text */}
+      <p className="text-low-contrast">
+        This text has insufficient contrast
+      </p>
+    </div>
+  );
+}
+
+// CSS with proper contrast ratios
+const contrastStyles = `
+  .text-high-contrast {
+    color: #1a1a1a; /* Dark gray on white - 15.6:1 ratio */
+  }
+  
+  .text-large-high-contrast {
+    color: #595959; /* Medium gray on white - 7:1 ratio */
+    font-size: 18px;
+    font-weight: bold;
+  }
+  
+  .text-low-contrast {
+    color: #cccccc; /* Light gray on white - 1.6:1 ratio - BAD! */
+  }
+`;
+```
+
+### Color Independence
+```tsx
+// ✅ Good: Don't rely solely on color
+export function StatusIndicator({ status }: { status: 'success' | 'error' | 'warning' }) {
+  const getStatusInfo = (status: string) => {
+    switch (status) {
+      case 'success':
+        return { icon: '✓', label: 'Success', color: 'green' };
+      case 'error':
+        return { icon: '✗', label: 'Error', color: 'red' };
+      case 'warning':
+        return { icon: '⚠', label: 'Warning', color: 'orange' };
+      default:
+        return { icon: '?', label: 'Unknown', color: 'gray' };
+    }
+  };
+
+  const statusInfo = getStatusInfo(status);
+
+  return (
+    <div className={`status-indicator status-${status}`}>
+      <span className="status-icon" aria-hidden="true">
+        {statusInfo.icon}
+      </span>
+      <span className="status-label">
+        {statusInfo.label}
+      </span>
+    </div>
+  );
+}
+
+// ❌ Bad: Relying only on color
+export function BadStatusIndicator({ status }: { status: string }) {
+  return (
+    <div className={`status-${status}`}>
+      {/* Only color indicates status - inaccessible! */}
+    </div>
+  );
+}
+```
+
+## Testing and Validation
+
+### Accessibility Testing Setup
+```tsx
+// test/setup/accessibility.ts
+import { axe, toHaveNoViolations } from 'jest-axe';
+
+expect.extend(toHaveNoViolations);
+
+// Custom matcher for accessibility testing
+export const accessibilityTest = async (container: HTMLElement) => {
+  const results = await axe(container);
+  expect(results).toHaveNoViolations();
+};
+
+// Test utilities
+export const renderWithAccessibility = (ui: React.ReactElement) => {
+  const utils = render(ui);
+  
+  // Ensure proper heading structure
+  const headings = utils.container.querySelectorAll('h1, h2, h3, h4, h5, h6');
+  const headingLevels = Array.from(headings).map(h => parseInt(h.tagName[1]));
+  
+  // Check for proper heading hierarchy
+  for (let i = 1; i < headingLevels.length; i++) {
+    expect(headingLevels[i] - headingLevels[i - 1]).toBeLessThanOrEqual(1);
+  }
+  
+  return utils;
+};
+```
+
+### Component Accessibility Tests
+```tsx
+// components/__tests__/Button.test.tsx
+import { render, screen } from '@testing-library/react';
+import { accessibilityTest } from '@/test/setup/accessibility';
+import { Button } from '../Button';
+
+describe('Button Accessibility', () => {
+  it('should have no accessibility violations', async () => {
+    const { container } = render(<Button>Click me</Button>);
+    await accessibilityTest(container);
+  });
+
+  it('should have proper ARIA attributes', () => {
+    render(<Button aria-describedby="help-text">Submit</Button>);
+    
+    const button = screen.getByRole('button');
+    expect(button).toHaveAttribute('aria-describedby', 'help-text');
+  });
+
+  it('should be keyboard accessible', () => {
+    render(<Button>Click me</Button>);
+    
+    const button = screen.getByRole('button');
+    button.focus();
+    
+    expect(button).toHaveFocus();
+  });
+
+  it('should have sufficient color contrast', () => {
+    const { container } = render(<Button>Click me</Button>);
+    
+    // This would require a visual regression test or contrast checking library
+    // For now, we ensure the component renders with proper classes
+    expect(container.firstChild).toHaveClass('button');
+  });
+});
+```
+
+## Best Practices Summary
+
+### ✅ Do's
+- Use semantic HTML elements (article, section, nav, etc.)
+- Provide proper ARIA labels and descriptions
+- Ensure keyboard navigation works for all interactive elements
+- Maintain sufficient color contrast (4.5:1 for normal text)
+- Test with screen readers and keyboard navigation
+- Use proper heading hierarchy (h1 → h2 → h3)
+- Provide alternative text for images and icons
+- Make forms accessible with proper labels and error messages
+
+### ❌ Don'ts
+- Don't rely solely on color to convey information
+- Don't use generic div/span when semantic elements exist
+- Don't forget to test keyboard navigation
+- Don't ignore screen reader announcements
+- Don't use low contrast colors
+- Don't create complex tab orders
+- Don't forget to provide skip links for long pages
+
+### 🎯 Testing Checklist
+- [ ] Automated accessibility testing (axe-core)
+- [ ] Manual keyboard navigation testing
+- [ ] Screen reader testing (NVDA, JAWS, VoiceOver)
+- [ ] Color contrast validation
+- [ ] Heading structure validation
+- [ ] Form accessibility testing
+- [ ] ARIA attribute validation
+- [ ] Focus management testing
+description:
+globs:
+alwaysApply: false
+---
