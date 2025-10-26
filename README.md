@@ -6,7 +6,7 @@
 [![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4.1.14-38B2AC?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
 [![Prisma](https://img.shields.io/badge/Prisma-6.17.1-2D3748?style=flat-square&logo=prisma)](https://prisma.io/)
 [![Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=flat-square&logo=vercel)](https://vercel.com/)
-[![Production Status](https://img.shields.io/badge/Status-Ready%20for%20Deployment-green?style=flat-square)](docs/PROJECT_STATUS.md)
+[![Production Status](https://img.shields.io/badge/Status-Live%20on%20Vercel-green?style=flat-square)](https://dashboard-and-drafting-app.vercel.app)
 
 > **Track, analyze, and celebrate your Fantasy NHL league's greatest moments and most epic fails!**
 
@@ -14,10 +14,11 @@ A comprehensive web application that transforms your Yahoo Fantasy NHL league da
 
 ## 🚀 Production Status
 
-**Current Status:** 🟡 **READY FOR DEPLOYMENT**  
+**Current Status:** 🟢 **LIVE ON VERCEL**  
 **Database:** ✅ Optimized & Synced (2024 season complete)  
 **Features:** ✅ All core functionality implemented  
 **Build:** ✅ TypeScript strict mode, no errors  
+**Deployment:** ✅ Successfully deployed and operational  
 
 [📊 View detailed project status →](docs/PROJECT_STATUS.md)
 
@@ -52,9 +53,9 @@ Highlight the... memorable moments with categories like:
 
 ## 🚀 Live Demo
 
-[![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-Visit_Site-green?style=for-the-badge)](https://your-app.vercel.app)
+[![Live Demo](https://img.shields.io/badge/🚀_Live_Demo-Visit_Site-green?style=for-the-badge)](https://dashboard-and-drafting-app.vercel.app)
 
-*Coming soon - currently in development*
+**🎉 Now Live on Vercel!** The app is fully deployed and operational.
 
 ## 🛠️ Tech Stack
 
