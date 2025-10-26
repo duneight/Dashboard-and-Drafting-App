@@ -57,6 +57,15 @@ export interface RegularVsPlayoffScoring {
   totalPlayoffGames: number
 }
 
+export interface RegularVsPlayoffPerformance {
+  manager: string
+  regularSeasonWinPct: number
+  playoffWinPct: number
+  clutchFactor: number
+  playoffAppearances: number
+  championships: number
+}
+
 export interface LuckIndex {
   manager: string
   actualWins: number
