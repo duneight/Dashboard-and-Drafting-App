@@ -32,6 +32,9 @@ interface LeagueKey {
   season: string
   gameCode: string
   gameAbbreviation: string
+  leagueName?: string
+  renew?: string
+  renewed?: string
 }
 
 interface YahooGame {
