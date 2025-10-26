@@ -43,10 +43,15 @@ next-env.d.ts
 # documentation
 /docs
 
-# debug and test scripts
+# debug and test scripts (keeping config files)
 debug-*.js
 test-*.js
 check-*.js
 compare-*.js
 delete-*.js
 *.ps1
+
+# but explicitly allow config files
+!next.config.js
+!postcss.config.js
+!tailwind.config.ts
