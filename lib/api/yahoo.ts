@@ -57,6 +57,8 @@ interface YahooLeague {
   is_finished: string
   game_code: string
   season: string
+  renew?: string
+  renewed?: string
 }
 
 export class YahooApiClient {

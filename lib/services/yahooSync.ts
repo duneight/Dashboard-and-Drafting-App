@@ -119,13 +119,15 @@ export class YahooSyncService {
         
         if (result.status === 'fulfilled' && result.value.success) {
           const { result: leagueResult } = result.value
-          leaguesProcessed += leagueResult.leaguesProcessed
-          teamsProcessed += leagueResult.teamsProcessed
-          matchupsProcessed += leagueResult.matchupsProcessed
-          weeklyStatsProcessed += leagueResult.weeklyStatsProcessed
-          
-          if (leagueResult.errors.length > 0) {
-            errors.push(...leagueResult.errors)
+          if (leagueResult) {
+            leaguesProcessed += leagueResult.leaguesProcessed
+            teamsProcessed += leagueResult.teamsProcessed
+            matchupsProcessed += leagueResult.matchupsProcessed
+            weeklyStatsProcessed += leagueResult.weeklyStatsProcessed
+            
+            if (leagueResult.errors.length > 0) {
+              errors.push(...leagueResult.errors)
+            }
           }
         } else {
           const errorMsg = result.status === 'fulfilled' 
@@ -785,25 +787,27 @@ export class YahooSyncService {
         
         // Add existing players to the map
         existingDraftResults.forEach(player => {
-          playerMap.set(player.playerKey, {
-            playerId: player.playerId,
-            name: player.fullName,
-            firstName: player.fullName?.split(' ')[0],
-            lastName: player.fullName?.split(' ').slice(1).join(' '),
-            position: player.position,
-            positionType: player.positionType,
-            nhlTeam: player.nhlTeam,
-            nhlTeamFullName: player.nhlTeamFullName,
-            uniformNumber: player.uniformNumber,
-            headshotUrl: player.headshotUrl,
-            playerUrl: player.playerUrl,
-            isUndroppable: player.isUndroppable,
-            editorialPlayerKey: player.editorialPlayerKey,
-          })
+          if (player.playerKey) {
+            playerMap.set(player.playerKey, {
+              playerId: player.playerId,
+              name: player.fullName,
+              firstName: player.fullName?.split(' ')[0],
+              lastName: player.fullName?.split(' ').slice(1).join(' '),
+              position: player.position,
+              positionType: player.positionType,
+              nhlTeam: player.nhlTeam,
+              nhlTeamFullName: player.nhlTeamFullName,
+              uniformNumber: player.uniformNumber,
+              headshotUrl: player.headshotUrl,
+              playerUrl: player.playerUrl,
+              isUndroppable: player.isUndroppable,
+              editorialPlayerKey: player.editorialPlayerKey,
+            })
+          }
         })
         
         // Process draft results with batch operations for massive speed improvement
-        const draftRecords = draftResults.map(draftResult => {
+        const draftRecords = draftResults.map((draftResult: any) => {
           const playerInfo = playerMap.get(draftResult.player_key)
           return {
               pick: parseInt(draftResult.pick),
@@ -830,7 +834,7 @@ export class YahooSyncService {
         // Batch upsert using transaction for maximum speed
         await prisma.$transaction(async (tx) => {
           // Delete existing records for this season/team combo to avoid conflicts
-          const teamKeys = [...new Set(draftRecords.map(r => r.teamKey))]
+          const teamKeys = [...new Set(draftRecords.map((r: any) => r.teamKey as string))] as string[]
           await tx.draftResult.deleteMany({
             where: {
               teamKey: { in: teamKeys },
@@ -865,7 +869,7 @@ export class YahooSyncService {
           : [leagueData.transactions.fantasy_content.league.transactions.transaction]
 
         // Prepare all transaction records for batch processing
-        const transactionRecords = transactions.map(transaction => ({
+        const transactionRecords = transactions.map((transaction: any) => ({
               transactionKey: transaction.transaction_key,
               transactionId: parseInt(transaction.transaction_id),
               season: season,
@@ -1040,8 +1044,9 @@ export class YahooSyncService {
         for (let i = 0; i < matchupsToProcess.length; i += batchSize) {
           const batch = matchupsToProcess.slice(i, i + batchSize)
           
-          await prisma.$transaction(
-            batch.map(matchupData => {
+          await prisma.$transaction(async (tx) => {
+            const promises = []
+            for (const matchupData of batch) {
               const teams = Array.isArray(matchupData.teams?.team)
                 ? matchupData.teams.team
                 : [matchupData.teams?.team]
@@ -1056,53 +1061,57 @@ export class YahooSyncService {
                 const sortedTeamKeys = [team1Key, team2Key].sort()
                 const matchupId = parseInt(`${week}${sortedTeamKeys[0].split('.').pop()}${sortedTeamKeys[1].split('.').pop()}`)
 
-                return prisma.matchup.upsert({
-                  where: { 
-                    matchupId_season: {
-                      matchupId: matchupId,
-                      season: season,
+                promises.push(
+                  tx.matchup.upsert({
+                    where: { 
+                      matchupId_season: {
+                        matchupId: matchupId,
+                        season: season,
+                      },
                     },
-                  },
-                  update: {
-                    week: week,
-                    status: matchupData.status,
-                    isPlayoffs: matchupData.is_playoffs === '1' || matchupData.is_playoffs === 1,
-                    isConsolation: matchupData.is_consolation === '1' || matchupData.is_consolation === 1,
-                    isTied: matchupData.is_tied === '1' || matchupData.is_tied === 1,
-                    winnerTeamKey: matchupData.winner_team_key,
-                    team1Points: homeTeam.team_points?.total ? parseFloat(homeTeam.team_points.total) : null,
-                    team2Points: awayTeam.team_points?.total ? parseFloat(awayTeam.team_points.total) : null,
-                    season: season,
-                    weekStart: matchupData.week_start,
-                    weekEnd: matchupData.week_end,
-                    statWinners: JSON.stringify(matchupData.stat_winners),
-                    team1Stats: JSON.stringify(homeTeam.team_stats),
-                    team2Stats: JSON.stringify(awayTeam.team_stats)
-                  },
-                  create: {
-                    matchupId: matchupId,
-                    leagueId: leagueId,
-                    week: week,
-                    status: matchupData.status,
-                    isPlayoffs: matchupData.is_playoffs === '1' || matchupData.is_playoffs === 1,
-                    isConsolation: matchupData.is_consolation === '1' || matchupData.is_consolation === 1,
-                    isTied: matchupData.is_tied === '1' || matchupData.is_tied === 1,
-                    team1Key: team1Key,
-                    team2Key: team2Key,
-                    winnerTeamKey: matchupData.winner_team_key,
-                    team1Points: homeTeam.team_points?.total ? parseFloat(homeTeam.team_points.total) : null,
-                    team2Points: awayTeam.team_points?.total ? parseFloat(awayTeam.team_points.total) : null,
-                    season: season,
-                    weekStart: matchupData.week_start,
-                    weekEnd: matchupData.week_end,
-                    statWinners: JSON.stringify(matchupData.stat_winners),
-                    team1Stats: JSON.stringify(homeTeam.team_stats),
-                    team2Stats: JSON.stringify(awayTeam.team_stats)
-                  }
-                })
+                    update: {
+                      week: week,
+                      status: matchupData.status,
+                      isPlayoffs: matchupData.is_playoffs === '1' || matchupData.is_playoffs === 1,
+                      isConsolation: matchupData.is_consolation === '1' || matchupData.is_consolation === 1,
+                      isTied: matchupData.is_tied === '1' || matchupData.is_tied === 1,
+                      winnerTeamKey: matchupData.winner_team_key,
+                      team1Points: homeTeam.team_points?.total ? parseFloat(homeTeam.team_points.total) : null,
+                      team2Points: awayTeam.team_points?.total ? parseFloat(awayTeam.team_points.total) : null,
+                      season: season,
+                      weekStart: matchupData.week_start,
+                      weekEnd: matchupData.week_end,
+                      statWinners: JSON.stringify(matchupData.stat_winners),
+                      team1Stats: JSON.stringify(homeTeam.team_stats),
+                      team2Stats: JSON.stringify(awayTeam.team_stats)
+                    },
+                    create: {
+                      matchupId: matchupId,
+                      leagueId: leagueId,
+                      week: week,
+                      status: matchupData.status,
+                      isPlayoffs: matchupData.is_playoffs === '1' || matchupData.is_playoffs === 1,
+                      isConsolation: matchupData.is_consolation === '1' || matchupData.is_consolation === 1,
+                      isTied: matchupData.is_tied === '1' || matchupData.is_tied === 1,
+                      team1Key: team1Key,
+                      team2Key: team2Key,
+                      winnerTeamKey: matchupData.winner_team_key,
+                      team1Points: homeTeam.team_points?.total ? parseFloat(homeTeam.team_points.total) : null,
+                      team2Points: awayTeam.team_points?.total ? parseFloat(awayTeam.team_points.total) : null,
+                      season: season,
+                      weekStart: matchupData.week_start,
+                      weekEnd: matchupData.week_end,
+                      statWinners: JSON.stringify(matchupData.stat_winners),
+                      team1Stats: JSON.stringify(homeTeam.team_stats),
+                      team2Stats: JSON.stringify(awayTeam.team_stats)
+                    }
+                  })
+                )
               }
-              return Promise.resolve()
-            }),
+            }
+            
+            return Promise.all(promises)
+          },
             { 
               timeout: Math.max(30000, batchSize * 200), // Scale timeout with batch size
               maxWait: 10000 // 10s max wait for connection

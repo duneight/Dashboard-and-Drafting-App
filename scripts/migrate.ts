@@ -183,6 +183,9 @@ async function upsertTeams(leagueId: string, leagueData: LeagueData) {
   const teams = Array.isArray(teamsData) ? teamsData : [teamsData]
   const standings = standingsData ? (Array.isArray(standingsData) ? standingsData : [standingsData]) : []
   
+  // Extract season
+  const season = extractSeason(leagueData)
+  
   // Create a map of standings by team key for quick lookup
   const standingsMap = new Map()
   standings.forEach((standing: any) => {
@@ -193,7 +196,7 @@ async function upsertTeams(leagueId: string, leagueData: LeagueData) {
     const standing = standingsMap.get(team.team_key)
 
           await prisma.team.upsert({
-      where: { teamKey: team.team_key },
+      where: { teamKey_season: { teamKey: team.team_key, season } },
             update: {
         name: team.name,
         url: team.url,
@@ -233,7 +236,7 @@ async function upsertTeams(leagueId: string, leagueData: LeagueData) {
         rank: standing?.rank ? parseInt(standing.rank) : null,
         isFinished: standing?.is_finished === '1',
         leagueId,
-        season: new Date().getFullYear().toString(), // This should be extracted from league data
+        season,
       }
     })
   }
@@ -249,13 +252,16 @@ async function upsertMatchups(leagueId: string, leagueData: LeagueData) {
   
   const teams = Array.isArray(matchupsData) ? matchupsData : [matchupsData]
   
+  // Extract season
+  const season = extractSeason(leagueData)
+  
   for (const team of teams) {
     if (team.matchups?.matchup) {
       const matchups = Array.isArray(team.matchups.matchup) ? team.matchups.matchup : [team.matchups.matchup]
       
       for (const matchup of matchups) {
             await prisma.matchup.upsert({
-          where: { matchupId: parseInt(matchup.matchup_id) },
+          where: { matchupId_season: { matchupId: parseInt(matchup.matchup_id), season } },
               update: {
             week: parseInt(matchup.week),
             status: matchup.status,
@@ -282,7 +288,7 @@ async function upsertMatchups(leagueId: string, leagueData: LeagueData) {
             team1Points: matchup.teams?.team?.[0]?.team_points?.total ? parseFloat(matchup.teams.team[0].team_points.total) : null,
             team2Points: matchup.teams?.team?.[1]?.team_points?.total ? parseFloat(matchup.teams.team[1].team_points.total) : null,
             leagueId,
-            season: new Date().getFullYear().toString(), // This should be extracted from league data
+            season,
           }
         })
       }

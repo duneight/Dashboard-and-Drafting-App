@@ -34,10 +34,13 @@ ChartJS.register(
 
 export default function DashboardPage() {
   const [mountCount] = useState(() => {
-    const count = (window as any).__dashboardMountCount || 0
-    ;(window as any).__dashboardMountCount = count + 1
-    console.log(`🔄 Dashboard mounted ${count + 1} times`)
-    return count + 1
+    if (typeof window !== 'undefined') {
+      const count = (window as any).__dashboardMountCount || 0
+      ;(window as any).__dashboardMountCount = count + 1
+      console.log(`🔄 Dashboard mounted ${count + 1} times`)
+      return count + 1
+    }
+    return 1
   })
   
   const [activeTab, setActiveTab] = useState('rankings')

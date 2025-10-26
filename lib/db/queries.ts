@@ -80,28 +80,6 @@ export const dbQueries = {
     })
   },
 
-  // Get weekly stats for a team
-  async getTeamWeeklyStats(teamKey: string, season?: string) {
-    const where: any = { teamKey }
-    
-    if (season) {
-      where.season = season
-    }
-    
-    return await prisma.weeklyTeamStat.findMany({
-      where,
-      orderBy: { week: 'asc' },
-      include: {
-        team: {
-          select: {
-            name: true,
-            managerNickname: true
-          }
-        }
-      }
-    })
-  },
-
   // Get hall of fame data
   async getHallOfFameData() {
     // This would call the analytics functions
