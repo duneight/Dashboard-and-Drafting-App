@@ -213,7 +213,7 @@ export const staticLeagueData = {
   ],
   hallOfFame: [
     {
-      category: "The Champion",
+      category: "Mr. Champion",
       manager: "Manager1",
       teamName: "International Whiddens Day",
       value: 3,
@@ -284,5 +284,6 @@ export const staticLeagueData = {
     totalTeams: 12,
     totalMatchups: 840,
     currentSeason: "2022-23",
+    availableSeasons: ["2022-23", "2021-22", "2020-21", "2019-20", "2018-19"]
   }
 }

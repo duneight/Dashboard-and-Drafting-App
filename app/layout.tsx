@@ -2,6 +2,9 @@ import type { Metadata } from 'next'
 import { Plus_Jakarta_Sans } from 'next/font/google'
 import './globals.css'
 import { Navbar } from './components/Navbar'
+import { QueryProvider } from './components/QueryProvider'
+import { DevRefreshButton } from './components/DevRefreshButton'
+import { DraftNavbarProvider } from './components/DraftNavbarProvider'
 
 // Configure the font
 const jakarta = Plus_Jakarta_Sans({ 
@@ -23,12 +26,18 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`${jakarta.variable} font-sans`}>
-        <div className="relative flex min-h-screen flex-col">
-          <Navbar />
-          <main className="flex-1">
-            {children}
-          </main>
-        </div>
+        <QueryProvider>
+          <DraftNavbarProvider>
+            <div className="relative flex min-h-screen flex-col">
+              <Navbar />
+              <main className="flex-1">
+                {children}
+              </main>
+              {/* Dev Refresh Button - Top Right */}
+              <DevRefreshButton />
+            </div>
+          </DraftNavbarProvider>
+        </QueryProvider>
       </body>
     </html>
   )

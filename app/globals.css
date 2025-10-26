@@ -181,11 +181,16 @@
   .sortable-header {
     cursor: pointer;
     user-select: none;
-    transition: all 0.2s ease-in-out;
+    transition: color 0.2s ease-in-out, background-color 0.2s ease-in-out;
   }
   .sortable-header:hover {
     color: hsl(var(--primary));
     background-color: hsl(var(--muted) / 0.3);
+  }
+
+  /* Large tooltip styling */
+  [title] {
+    font-size: 0.875rem !important;
   }
 
   /* Enhanced Table Styling */
@@ -417,4 +422,34 @@
   .draft-table td {
     padding: 0.5rem 0.25rem;
   }
+}
+
+/* Landing page gradient */
+.hero-gradient{
+  background:
+    radial-gradient(1200px 600px at 15% -10%,
+      hsl(var(--card) / 0.55) 0%,
+      transparent 60%),
+    radial-gradient(900px 500px at 85% 0%,
+      hsl(var(--primary) / 0.12) 0%,
+      transparent 55%),
+    radial-gradient(1600px 800px at 50% 110%,
+      hsl(var(--background)) 0%,
+      hsl(var(--background)) 60%,
+      hsl(var(--card)) 100%);
+}
+
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  /* Tablet adjustments */
+}
+
+@media (max-width: 480px) {
+  /* Mobile adjustments */
+}
+
+/* Text stroke effect for better readability over images */
+.stroke-text {
+  -webkit-text-stroke: 1px black;
 }

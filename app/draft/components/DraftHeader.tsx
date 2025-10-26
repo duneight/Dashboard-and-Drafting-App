@@ -10,8 +10,7 @@ export function DraftHeader() {
     { id: 'draft-board', label: 'Draft Hub', icon: '📋' },
     { id: 'best-available', label: 'Best Available', icon: '🏆' },
     { id: 'position-analysis', label: 'Position Analysis', icon: '📊' },
-    { id: 'team-rosters', label: 'Team Rosters', icon: '👥' },
-    { id: 'draft-trends', label: 'Draft Trends', icon: '📈' }
+    { id: 'team-rosters', label: 'Team Rosters', icon: '👥' }
   ]
 
   const handleReset = () => {
@@ -26,9 +25,6 @@ export function DraftHeader() {
         {/* Title and Progress */}
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">
-              Etobicoke Boys Keeper Pool
-            </h1>
             <div className="text-sm text-muted-foreground mt-1">
               Draft Progress: {draftState.picks.filter(p => p.playerName).length} of {LEAGUE_SETTINGS.numRounds * LEAGUE_SETTINGS.teams} picks
             </div>

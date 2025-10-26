@@ -5,7 +5,7 @@ import { ReactNode } from 'react'
 interface Tab {
   id: string
   label: string
-  icon?: ReactNode
+  icon?: string | ReactNode
 }
 
 interface TabNavigationProps {
@@ -29,7 +29,7 @@ export function TabNavigation({ tabs, activeTab, onTabChange, className = '' }: 
                 : 'bg-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50'
             }`}
           >
-            {tab.icon}
+            {typeof tab.icon === 'string' ? <span>{tab.icon}</span> : tab.icon}
             {tab.label}
           </button>
         ))}

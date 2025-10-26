@@ -3,6 +3,7 @@ import qs from 'qs'
 import { XMLParser } from 'fast-xml-parser'
 import { z } from 'zod'
 import { logger } from '@/lib/logger'
+import { SEASONS_TO_SYNC, KEEPER_LEAGUE_PREFIX, KEEPER_LEAGUE_ID } from '@/lib/constants'
 
 // Environment variables validation
 const envSchema = z.object({
@@ -151,6 +152,61 @@ export class YahooApiClient {
     }
   }
 
+  async fetchLeagueDataParallel(leagueKey: string): Promise<any> {
+    const endpoints = [
+      { key: 'metadata', url: `${this.yahooBaseUrl}/league/${leagueKey}` },
+      { key: 'settings', url: `${this.yahooBaseUrl}/league/${leagueKey};out=settings` },
+      { key: 'teams_standings', url: `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=standings` },
+      { key: 'scoreboard', url: `${this.yahooBaseUrl}/league/${leagueKey};out=scoreboard` },
+      { key: 'draftresults', url: `${this.yahooBaseUrl}/league/${leagueKey};out=draftresults` },
+      { key: 'transactions', url: `${this.yahooBaseUrl}/league/${leagueKey}/transactions` },
+    ]
+    
+    // Fetch all endpoints in parallel
+    logger.info('Fetching league data in parallel', { leagueKey, endpointCount: endpoints.length })
+    
+    const results = await Promise.allSettled(
+      endpoints.map(async (endpoint) => {
+        try {
+          const data = await this.makeApiRequest(endpoint.url)
+          return { key: endpoint.key, data }
+        } catch (error) {
+          logger.error(`Error fetching ${endpoint.key}`, error as Error)
+          return { key: endpoint.key, data: null }
+        }
+      })
+    )
+    
+    // Combine results into single object
+    const leagueData: any = {}
+    results.forEach((result) => {
+      if (result.status === 'fulfilled' && result.value) {
+        leagueData[result.value.key] = result.value.data
+      }
+    })
+    
+    return leagueData
+  }
+
+  async fetchTeamsMatchupsOptimized(leagueKey: string): Promise<any> {
+    // This endpoint is slow because it fetches ALL matchup history
+    // Fetch separately with longer timeout
+    logger.info('Fetching teams matchups (slow endpoint)', { leagueKey })
+    
+    const url = `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=matchups`
+    
+    // Use longer timeout for this endpoint
+    const response = await this.axiosInstance.get(url, {
+      headers: {
+        Authorization: `Bearer ${this.credentials!.access_token}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      timeout: 60000, // 60 seconds for matchups endpoint
+    })
+    
+    return this.xmlParser.parse(response.data)
+  }
+
   async getAllLeagueKeys(): Promise<LeagueKey[]> {
     try {
       logger.info('Fetching all league keys for user')
@@ -184,6 +240,12 @@ export class YahooApiClient {
                     : [userGame.leagues.league]
                   
                   leagues.forEach((league) => {
+                    logger.debug('Processing league', { 
+                      league: JSON.stringify(league, null, 2),
+                      gameCode: String(gameCode),
+                      season: String(userGame.season),
+                      gameAbbreviation 
+                    })
                     const leagueKey = league.league_key
                     if (leagueKey) {
                       leagueKeys.push({
@@ -191,7 +253,13 @@ export class YahooApiClient {
                         season: String(userGame.season),
                         gameCode: String(gameCode),
                         gameAbbreviation,
+                        leagueName: league.name, // Store league name for filtering
+                        renew: league.renew, // Store renewal info
+                        renewed: league.renewed, // Store renewed info
                       })
+                      logger.debug('Added league key', { leagueKey, season: String(userGame.season), gameCode: String(gameCode), leagueName: league.name })
+                    } else {
+                      logger.warn('League missing league_key', { league })
                     }
                   })
                 }
@@ -201,11 +269,50 @@ export class YahooApiClient {
         }
       }
 
-      // Filter to NHL leagues only and recent seasons
-      const seasonsToFetch = ['2024', '2023', '2022']
-      leagueKeys = leagueKeys.filter(league => 
-        league.gameAbbreviation === 'nhl' && seasonsToFetch.includes(league.season)
+        // Filter to only keeper league by renewal chain (since league ID changes each season)
+      // First, find all NHL leagues
+      const nhlLeagues = leagueKeys.filter(league => 
+        league.gameAbbreviation === 'nhl' && 
+        SEASONS_TO_SYNC.includes(league.season)
       )
+      
+      // Find the keeper league chain by tracing renewals from the known 2023 league
+      const keeperLeagueIds = new Set([KEEPER_LEAGUE_ID]) // Start with known 2023 league ID
+      
+      // Trace forward and backward through renewals
+      let foundNew = true
+      while (foundNew) {
+        foundNew = false
+        nhlLeagues.forEach(league => {
+          const leagueId = league.leagueKey.split('.l.')[1]
+          if (keeperLeagueIds.has(leagueId)) {
+            // This league is in our keeper chain, add its renewals
+            const renew = league.renew
+            const renewed = league.renewed
+            if (renew && !keeperLeagueIds.has(renew.split('_')[1])) {
+              keeperLeagueIds.add(renew.split('_')[1])
+              foundNew = true
+            }
+            if (renewed && !keeperLeagueIds.has(renewed.split('_')[1])) {
+              keeperLeagueIds.add(renewed.split('_')[1])
+              foundNew = true
+            }
+          }
+        })
+      }
+      
+      // Filter to only keeper league chain
+      leagueKeys = nhlLeagues.filter(league => {
+        const leagueId = league.leagueKey.split('.l.')[1]
+        return keeperLeagueIds.has(leagueId)
+      })
+      
+      // Auto-detect: If Yahoo API returns future season, it will be included
+      logger.info('Detected keeper league seasons', { 
+        seasons: leagueKeys.map(l => l.season),
+        configuredSeasons: SEASONS_TO_SYNC,
+        keeperLeaguePrefix: KEEPER_LEAGUE_PREFIX
+      })
 
       logger.info('Found NHL league keys', { count: leagueKeys.length })
       return leagueKeys
@@ -219,30 +326,59 @@ export class YahooApiClient {
     try {
       logger.info('Fetching data for league', { leagueKey })
       
-      const endpoints = [
-        'metadata',
-        'settings', 
-        'standings',
-        'scoreboard',
-        'teams',
-        'players',
-        'transactions',
-        'draftresults'
+      const leagueData: any = {}
+      
+      // Match MVP structure with proper ;out= format
+      const collections = [
+        // League-level endpoints
+        { name: 'metadata', url: `${this.yahooBaseUrl}/league/${leagueKey};out=metadata` },
+        { name: 'settings', url: `${this.yahooBaseUrl}/league/${leagueKey};out=settings` },
+        { name: 'standings', url: `${this.yahooBaseUrl}/league/${leagueKey};out=standings` },
+        { name: 'scoreboard', url: `${this.yahooBaseUrl}/league/${leagueKey};out=scoreboard` },
+        { name: 'draftresults', url: `${this.yahooBaseUrl}/league/${leagueKey};out=draftresults` },
+        { name: 'transactions', url: `${this.yahooBaseUrl}/league/${leagueKey};out=transactions` },
+        
+        // Team-level endpoints (match MVP naming: teams_*)
+        { name: 'teams_metadata', url: `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=metadata` },
+        { name: 'teams_stats', url: `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=stats` },
+        { name: 'teams_standings', url: `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=standings` },
+        { name: 'teams_roster', url: `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=roster` },
+        { name: 'teams_draftresults', url: `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=draftresults` },
+        { name: 'teams_transactions', url: `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=transactions` },
+        { name: 'teams_matchups', url: `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=matchups` },
+        
+        // Player-level endpoints (streamlined - only what we need for league analysis)
+        // Removed: players_metadata, players_stats, players_ownership, players_percent_owned, players_draft_analysis
+        // We only need basic player data for draft results, not individual stats
       ]
 
-      const leagueData: any = {}
-
-      for (const endpoint of endpoints) {
+      for (const collection of collections) {
         try {
-          const url = `${this.yahooBaseUrl}/league/${leagueKey}/${endpoint}`
-          const data = await this.makeApiRequest(url)
-          leagueData[endpoint] = data
+          logger.info('Fetching endpoint', { endpoint: collection.name, url: collection.url })
+          const data = await this.makeApiRequest(collection.url)
           
-          // Add delay between requests to respect rate limits
-          await new Promise(resolve => setTimeout(resolve, 1000))
+          // Log what we got back
+          if (data?.fantasy_content?.league) {
+            logger.info('Endpoint data received', { 
+              endpoint: collection.name, 
+              hasLeague: !!data.fantasy_content.league,
+              leagueKeys: Object.keys(data.fantasy_content.league || {})
+            })
+          } else {
+            logger.warn('Endpoint returned unexpected structure', { 
+              endpoint: collection.name,
+              dataKeys: data ? Object.keys(data) : [],
+              hasFantasyContent: !!data?.fantasy_content
+            })
+          }
+          
+          leagueData[collection.name] = data
+          
+          // Add delay between requests to respect rate limits (reduced from 1000ms to 500ms)
+          await new Promise(resolve => setTimeout(resolve, 500))
         } catch (error) {
-          logger.error('Error fetching endpoint', error as Error, { endpoint, leagueKey })
-          leagueData[endpoint] = null
+          logger.error('Error fetching endpoint', error as Error, { endpoint: collection.name, leagueKey, url: collection.url })
+          leagueData[collection.name] = null
         }
       }
 
@@ -273,8 +409,8 @@ export class YahooApiClient {
           const data = await this.makeApiRequest(url)
           gameData[endpoint] = data
           
-          // Add delay between requests
-          await new Promise(resolve => setTimeout(resolve, 1000))
+          // Add delay between requests (reduced from 1000ms to 500ms)
+          await new Promise(resolve => setTimeout(resolve, 500))
         } catch (error) {
           logger.error('Error fetching game endpoint', error as Error, { endpoint, gameCode })
           gameData[endpoint] = null
@@ -284,6 +420,38 @@ export class YahooApiClient {
       return gameData
     } catch (error) {
       logger.error('Error fetching game data', error as Error, { gameCode })
+      throw error
+    }
+  }
+
+  async fetchGameMetadata(gameCode: string): Promise<any> {
+    try {
+      logger.info('Fetching game metadata', { gameCode })
+      
+      const endpoints = [
+        'metadata',
+        'stat_categories', 
+        'position_types',
+        'roster_positions',
+        'game_weeks'
+      ]
+      
+      // Fetch in parallel for speed
+      const results = await Promise.all(
+        endpoints.map(endpoint => 
+          this.makeApiRequest(`${this.yahooBaseUrl}/game/${gameCode}/${endpoint}`)
+        )
+      )
+      
+      return {
+        metadata: results[0],
+        stat_categories: results[1],
+        position_types: results[2],
+        roster_positions: results[3],
+        game_weeks: results[4]
+      }
+    } catch (error) {
+      logger.error('Error fetching game metadata', error as Error, { gameCode })
       throw error
     }
   }

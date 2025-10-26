@@ -44,305 +44,176 @@ export const NHL_STAT_CATEGORIES = {
   GOALIE_GAMES: { id: 30, name: 'Goalie Games', display: 'GP', position: 'G' },
 } as const
 
-// Hall of Fame Categories
+// Hall of Fame Categories - Data-Driven Categories
 export const HALL_OF_FAME_CATEGORIES = [
+  // All-Time Achievements
   {
-    id: 'dynasty-builder',
-    name: 'Dynasty Builder',
-    description: 'Most total wins across all seasons',
-    statType: 'wins',
-    higherIsBetter: true,
+    id: 'dynasty-king',
+    name: 'Dynasty King',
+    description: 'Most championships',
+    type: 'all-time',
+    statType: 'championships',
   },
   {
-    id: 'the-champion',
-    name: 'The Champion',
-    description: 'Most championships (first place finishes)',
-    statType: 'rank',
-    higherIsBetter: false, // Lower rank is better
+    id: 'point-titan',
+    name: 'Point Titan',
+    description: 'Most total fantasy points all-time',
+    type: 'all-time',
+    statType: 'totalPoints',
   },
   {
-    id: 'playoff-merchant',
-    name: 'Playoff Merchant',
-    description: 'Most playoff appearances',
-    statType: 'playoffs',
-    higherIsBetter: true,
-  },
-  {
-    id: 'the-consistent-one',
-    name: 'The Consistent One',
-    description: 'Highest win percentage (min 2 seasons)',
+    id: 'the-consistent',
+    name: 'Mr. Consistent',
+    description: 'Best win percentage',
+    type: 'all-time',
     statType: 'winPercentage',
-    higherIsBetter: true,
   },
   {
-    id: 'point-machine',
-    name: 'Point Machine',
-    description: 'Most total fantasy points scored',
-    statType: 'pointsFor',
-    higherIsBetter: true,
-  },
-  {
-    id: 'perfect-season',
-    name: 'Perfect Season',
-    description: 'Best single-season record',
-    statType: 'record',
-    higherIsBetter: true,
-  },
-  {
-    id: 'scoring-explosion',
-    name: 'Scoring Explosion',
-    description: 'Highest fantasy points in a single season',
-    statType: 'seasonPoints',
-    higherIsBetter: true,
-  },
-  {
-    id: 'runaway-winner',
-    name: 'Runaway Winner',
-    description: 'Biggest points margin above 2nd place',
-    statType: 'margin',
-    higherIsBetter: true,
-  },
-  {
-    id: 'week-winner',
-    name: 'Week Winner',
-    description: 'Highest single-week fantasy score',
-    statType: 'weeklyPoints',
-    higherIsBetter: true,
-  },
-  {
-    id: 'the-clutch-performer',
-    name: 'The Clutch Performer',
-    description: 'Most playoff week wins',
+    id: 'playoff-warrior',
+    name: 'Playoff Warrior',
+    description: 'Most playoff wins all-time',
+    type: 'all-time',
     statType: 'playoffWins',
-    higherIsBetter: true,
   },
   {
-    id: 'set-it-forget-it',
-    name: 'Set It & Forget It',
-    description: 'Fewest roster moves but still made playoffs',
-    statType: 'efficiency',
-    higherIsBetter: false, // Fewer moves is better
+    id: 'goal-machine',
+    name: 'Goal Machine',
+    description: 'Most goals scored all-time',
+    type: 'all-time',
+    statType: 'totalGoals',
+    statId: NHL_STAT_CATEGORIES.GOALS.id,
   },
   {
-    id: 'the-steady-hand',
-    name: 'The Steady Hand',
-    description: 'Best record with fewest trades',
-    statType: 'tradeEfficiency',
-    higherIsBetter: false,
-  },
-  {
-    id: 'brick-wall',
-    name: 'Brick Wall',
-    description: 'Most goalie wins',
-    statType: 'goalieWins',
+    id: 'iron-wall',
+    name: 'Iron Wall',
+    description: 'Most goalie wins all-time',
+    type: 'all-time',
+    statType: 'totalGoalieWins',
     statId: NHL_STAT_CATEGORIES.WINS.id,
-    higherIsBetter: true,
   },
   {
     id: 'shutout-king',
     name: 'Shutout King',
-    description: 'Most shutouts',
-    statType: 'goalieShutouts',
+    description: 'Most shutouts all-time',
+    type: 'all-time',
+    statType: 'totalShutouts',
     statId: NHL_STAT_CATEGORIES.SHUTOUTS.id,
-    higherIsBetter: true,
   },
   {
-    id: 'save-percentage-champion',
-    name: 'Save % Champion',
-    description: 'Highest save percentage',
-    statType: 'goalieSavePercentage',
-    statId: NHL_STAT_CATEGORIES.SAVE_PERCENTAGE.id,
-    higherIsBetter: true,
-  },
-  {
-    id: 'sniper',
-    name: 'Sniper',
-    description: 'Most goals scored',
-    statType: 'skaterGoals',
-    statId: NHL_STAT_CATEGORIES.GOALS.id,
-    higherIsBetter: true,
-  },
-  {
-    id: 'playmaker',
-    name: 'Playmaker',
-    description: 'Most assists',
-    statType: 'skaterAssists',
+    id: 'the-playmaker',
+    name: 'The Playmaker',
+    description: 'Most assists all-time',
+    type: 'all-time',
+    statType: 'totalAssists',
     statId: NHL_STAT_CATEGORIES.ASSISTS.id,
-    higherIsBetter: true,
+  },
+  // Single-Season Records
+  {
+    id: 'season-dominator',
+    name: 'Season Dominator',
+    description: 'Best single-season record + points',
+    type: 'single-season',
+    statType: 'seasonRecord',
   },
   {
-    id: 'pp-specialist',
-    name: 'PP Specialist',
-    description: 'Most power play points',
-    statType: 'skaterPPPoints',
-    statId: NHL_STAT_CATEGORIES.POWERPLAY_POINTS.id,
-    higherIsBetter: true,
+    id: 'weekly-explosion',
+    name: 'Weekly Explosion',
+    description: 'Highest single-week score ever',
+    type: 'single-season',
+    statType: 'weeklyPoints',
   },
   {
-    id: 'sh-hero',
-    name: 'SH Hero',
-    description: 'Most shorthanded goals',
-    statType: 'skaterSHGoals',
-    statId: NHL_STAT_CATEGORIES.SHORTHANDED_GOALS.id,
-    higherIsBetter: true,
+    id: 'unstoppable',
+    name: 'Unstoppable',
+    description: 'Longest win streak',
+    type: 'single-season',
+    statType: 'winStreak',
   },
   {
-    id: 'the-enforcer',
-    name: 'The Enforcer',
-    description: 'Most penalty minutes but still won',
-    statType: 'pimWithWins',
-    statId: NHL_STAT_CATEGORIES.PENALTY_MINUTES.id,
-    higherIsBetter: true,
+    id: 'close-game-specialist',
+    name: 'Close Game Specialist',
+    description: 'Best win percentage in close games (<10 point margin)',
+    type: 'all-time',
+    statType: 'closeGamePerformance',
   },
 ] as const
 
-// Wall of Shame Categories
+// Legacy exports for backward compatibility
+export const HALL_OF_FAME_AGGREGATE_CATEGORIES = HALL_OF_FAME_CATEGORIES.filter(c => c.type === 'all-time')
+export const HALL_OF_FAME_SINGLE_SEASON_CATEGORIES = HALL_OF_FAME_CATEGORIES.filter(c => c.type === 'single-season')
+
+// Wall of Shame Categories - Data-Driven Categories
 export const WALL_OF_SHAME_CATEGORIES = [
+  // All-Time Disappointments
   {
-    id: 'eternal-loser',
-    name: 'Eternal Loser',
-    description: 'Most total losses across all seasons',
-    statType: 'losses',
-    higherIsBetter: true,
+    id: 'close-but-no-cigar',
+    name: 'Close but No Cigar',
+    description: 'Most 2nd/3rd place finishes with no championships',
+    type: 'all-time',
+    statType: 'nearMisses',
   },
   {
-    id: 'last-place-larry',
-    name: 'Last Place Larry',
-    description: 'Most last-place finishes',
-    statType: 'lastPlace',
-    higherIsBetter: true,
+    id: 'eternal-last',
+    name: 'Eternal Last',
+    description: 'Worst average season finish',
+    type: 'all-time',
+    statType: 'averageRanking',
   },
   {
-    id: 'the-unlucky-one',
-    name: 'The Unlucky One',
-    description: 'Most playoff misses (barely missed cutoff)',
-    statType: 'playoffMisses',
-    higherIsBetter: true,
+    id: 'playoff-choker',
+    name: 'Playoff Choker',
+    description: 'Most playoff losses without a championship',
+    type: 'all-time',
+    statType: 'playoffLosses',
   },
-  {
-    id: 'worst-record',
-    name: 'Worst Record',
-    description: 'Lowest single-season win percentage',
-    statType: 'winPercentage',
-    higherIsBetter: false,
-  },
-  {
-    id: 'point-desert',
-    name: 'Point Desert',
-    description: 'Fewest fantasy points in a season',
-    statType: 'pointsFor',
-    higherIsBetter: false,
-  },
+  // Single-Season Disasters
   {
     id: 'rock-bottom',
     name: 'Rock Bottom',
-    description: 'Lowest single-week fantasy score',
-    statType: 'weeklyPoints',
-    higherIsBetter: false,
+    description: 'Worst single-season record',
+    type: 'single-season',
+    statType: 'seasonRecord',
   },
   {
-    id: 'playoff-choke',
-    name: 'Playoff Choke',
-    description: 'Best regular season, worst playoff result',
-    statType: 'choke',
-    higherIsBetter: true,
+    id: 'the-collapse',
+    name: 'Mr. Collapse',
+    description: 'Longest losing streak',
+    type: 'single-season',
+    statType: 'lossStreak',
   },
   {
-    id: 'losing-streak',
-    name: 'Losing Streak',
-    description: 'Most consecutive losing weeks',
-    statType: 'streak',
-    higherIsBetter: true,
+    id: 'brick-hands',
+    name: 'Brick Hands',
+    description: 'Most points against in one season',
+    type: 'single-season',
+    statType: 'pointsAgainst',
   },
   {
-    id: 'waiver-warrior',
-    name: 'Waiver Warrior',
-    description: 'Most roster moves but still finished last',
-    statType: 'inefficiency',
-    higherIsBetter: true,
-  },
-  {
-    id: 'the-overthinker',
-    name: 'The Overthinker',
-    description: 'Most trades but worst record',
-    statType: 'tradeInefficiency',
-    higherIsBetter: true,
-  },
-  {
-    id: 'inactive-owner',
-    name: 'Inactive Owner',
-    description: 'Fewest moves, worst record',
-    statType: 'inactivity',
-    higherIsBetter: true,
-  },
-  {
-    id: 'goalie-graveyard',
-    name: 'Goalie Graveyard',
-    description: 'Worst goalie stats',
-    statType: 'goalieLosses',
-    statId: NHL_STAT_CATEGORIES.LOSSES.id,
-    higherIsBetter: true,
-  },
-  {
-    id: 'cant-buy-a-goal',
-    name: "Can't Buy a Goal",
-    description: 'Lowest goals scored in season',
-    statType: 'skaterGoals',
-    statId: NHL_STAT_CATEGORIES.GOALS.id,
-    higherIsBetter: false,
-  },
-  {
-    id: 'penalty-box',
-    name: 'Penalty Box',
-    description: 'Most PIMs with losing record',
-    statType: 'pimWithLosses',
-    statId: NHL_STAT_CATEGORIES.PENALTY_MINUTES.id,
-    higherIsBetter: true,
-  },
-  {
-    id: 'the-minus',
-    name: 'The Minus',
-    description: 'Worst plus/minus rating',
-    statType: 'skaterPlusMinus',
-    statId: NHL_STAT_CATEGORIES.PLUS_MINUS.id,
-    higherIsBetter: false,
-  },
-  {
-    id: 'blowout-victim',
-    name: 'Blowout Victim',
-    description: 'Biggest single-week loss margin',
-    statType: 'lossMargin',
-    higherIsBetter: true,
-  },
-  {
-    id: 'never-stood-a-chance',
-    name: 'Never Stood a Chance',
-    description: 'Lost most categories in one matchup',
-    statType: 'categoryLosses',
-    higherIsBetter: true,
-  },
-  {
-    id: 'the-heartbreaker',
-    name: 'The Heartbreaker',
-    description: 'Most close losses (within 5 points)',
+    id: 'the-heartbreak',
+    name: 'The Heartbreak',
+    description: 'Most losses by less than 5 points',
+    type: 'all-time',
     statType: 'closeLosses',
-    higherIsBetter: true,
   },
   {
-    id: 'commissioner-fails',
-    name: 'Commissioner Fails',
-    description: "Commissioner's record vs league average",
-    statType: 'commissionerCurse',
-    higherIsBetter: true,
+    id: 'glass-cannon',
+    name: 'Glass Cannon',
+    description: 'High points + bad rank (single season)',
+    type: 'single-season',
+    statType: 'glassCannonSeason',
   },
   {
-    id: 'cursed-team-name',
-    name: 'Cursed Team Name',
-    description: 'Worst performing team names over time',
-    statType: 'teamNameCurse',
-    higherIsBetter: true,
+    id: 'the-snooze',
+    name: 'The Snooze',
+    description: 'Lowest weekly score ever',
+    type: 'single-season',
+    statType: 'lowestWeeklyScore',
   },
 ] as const
+
+// Legacy exports for backward compatibility
+export const WALL_OF_SHAME_AGGREGATE_CATEGORIES = WALL_OF_SHAME_CATEGORIES.filter(c => c.type === 'all-time')
+export const WALL_OF_SHAME_SINGLE_SEASON_CATEGORIES = WALL_OF_SHAME_CATEGORIES.filter(c => c.type === 'single-season')
 
 // Game codes for different sports
 export const GAME_CODES = {
@@ -357,3 +228,37 @@ export const POSITION_TYPES = {
   PLAYER: 'P',
   GOALIE: 'G',
 } as const
+
+// Keeper League Configuration
+export const KEEPER_LEAGUE_ID = '16794' // League ID portion
+export const KEEPER_LEAGUE_PREFIX = 'l.16794' // Match across seasons
+export const KEEPER_LEAGUE_START_YEAR = 2015 // Update to your league's first season
+
+// Dynamically generate seasons from start year to current year + 1 (for ongoing season)
+export function getSeasonsTotSync(): string[] {
+  const currentYear = new Date().getFullYear()
+  const seasons: string[] = []
+  
+  // Start from next year (ongoing season) down to league start year
+  for (let year = currentYear + 1; year >= KEEPER_LEAGUE_START_YEAR; year--) {
+    seasons.push(String(year))
+  }
+  
+  return seasons
+}
+
+// Test function for specific seasons only
+export function getTestSeasons(): string[] {
+  return ['2024', '2022'] // Only these two seasons for testing
+}
+
+// Yahoo API Configuration
+export const TEST_LEAGUE_KEY = process.env.YAHOO_TEST_LEAGUE_KEY || '427.l.16794'
+export const SEASONS_TO_SYNC = getSeasonsTotSync() // Dynamic seasons: ['2026', '2025', '2024', ..., '2015']
+export const CACHE_DURATION_HOURS = 24 // How long to cache league data before re-fetching
+
+// Yahoo API endpoints
+export const YAHOO_API = {
+  BASE_URL: 'https://fantasysports.yahooapis.com/fantasy/v2',
+  AUTH_ENDPOINT: 'https://api.login.yahoo.com/oauth2/get_token'
+}

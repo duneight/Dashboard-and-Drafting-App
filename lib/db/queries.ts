@@ -7,7 +7,6 @@ export const dbQueries = {
     return await prisma.league.findMany({
       orderBy: { season: 'desc' },
       include: {
-        game: true,
         teams: {
           orderBy: { rank: 'asc' }
         }
@@ -89,7 +88,7 @@ export const dbQueries = {
       where.season = season
     }
     
-    return await prisma.weeklyStat.findMany({
+    return await prisma.weeklyTeamStat.findMany({
       where,
       orderBy: { week: 'asc' },
       include: {

@@ -50,7 +50,7 @@ export const PlayerDropdown = forwardRef<HTMLDivElement, PlayerDropdownProps>(
     return (
       <div
         ref={ref}
-        className="absolute top-full left-0 right-0 z-50 mt-1 bg-card border border-border rounded-md shadow-lg max-h-60 overflow-y-auto"
+        className="absolute top-full left-0 w-96 min-w-96 z-50 mt-1 bg-card border border-border rounded-md shadow-lg max-h-60 overflow-y-auto"
       >
         {filteredPlayers.map((player, index) => (
           <button

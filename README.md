@@ -6,10 +6,20 @@
 [![TailwindCSS](https://img.shields.io/badge/TailwindCSS-4.1.14-38B2AC?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
 [![Prisma](https://img.shields.io/badge/Prisma-6.17.1-2D3748?style=flat-square&logo=prisma)](https://prisma.io/)
 [![Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=flat-square&logo=vercel)](https://vercel.com/)
+[![Production Status](https://img.shields.io/badge/Status-Ready%20for%20Deployment-green?style=flat-square)](docs/PROJECT_STATUS.md)
 
 > **Track, analyze, and celebrate your Fantasy NHL league's greatest moments and most epic fails!**
 
 A comprehensive web application that transforms your Yahoo Fantasy NHL league data into engaging analytics, featuring Hall of Fame celebrations and Wall of Shame highlights. Built with modern web technologies and designed for fantasy hockey enthusiasts.
+
+## 🚀 Production Status
+
+**Current Status:** 🟡 **READY FOR DEPLOYMENT**  
+**Database:** ✅ Optimized & Synced (2024 season complete)  
+**Features:** ✅ All core functionality implemented  
+**Build:** ✅ TypeScript strict mode, no errors  
+
+[📊 View detailed project status →](docs/PROJECT_STATUS.md)
 
 ## ✨ Features
 
@@ -82,50 +92,39 @@ fantasy-nhl-stats/
 
 ## 🚀 Quick Start
 
-### Prerequisites
-- Node.js 18+ 
-- PostgreSQL database (or Supabase account)
-- Yahoo Fantasy Sports API credentials
-
-### Installation
-
-1. **Clone the repository**
+1. **Clone and install**
    ```bash
    git clone https://github.com/yourusername/fantasy-nhl-stats.git
    cd fantasy-nhl-stats
-   ```
-
-2. **Install dependencies**
-   ```bash
    npm install
    ```
 
-3. **Set up environment variables**
+2. **Set up environment**
    ```bash
    cp env.example .env.local
    # Edit .env.local with your credentials
    ```
 
-4. **Set up the database**
+3. **Set up database**
    ```bash
    npm run db:migrate
    ```
 
-5. **Start the development server**
+4. **Start development**
    ```bash
    npm run dev
    ```
 
-Visit [http://localhost:3000](http://localhost:3000) to see your app!
+5. **Visit** [http://localhost:3000](http://localhost:3000)
 
-> 📖 **Need detailed setup instructions?** Check out our [Development Guide](docs/DEVELOPMENT_GUIDE.md)
+> 📖 **Need detailed setup instructions?** Check out our [Setup Guide](docs/SETUP_GUIDE.md)
 
 ## 📊 Analytics Categories
 
-### Hall of Fame Categories (10)
-- Dynasty Builder, The Champion, Playoff Merchant, The Consistent One
-- Point Machine, Perfect Season, Scoring Explosion, Runaway Winner
-- Week Winner, The Clutch Performer
+### Hall of Fame Categories (19)
+**Core Categories:** Dynasty Builder, The Champion, Playoff Merchant, The Consistent One, Point Machine, Perfect Season, Scoring Explosion, Runaway Winner, Week Winner, The Clutch Performer
+
+**Specialized Categories:** Set It & Forget It, The Steady Hand, Brick Wall, Shutout King, Save % Champion, Sniper, Playmaker, PP Specialist, SH Hero, The Enforcer
 
 ### Wall of Shame Categories (19)
 - Eternal Loser, Last Place Larry, The Unlucky One, Worst Record
@@ -144,14 +143,20 @@ Visit [http://localhost:3000](http://localhost:3000) to see your app!
 | `npm run lint` | Run ESLint |
 | `npm run db:migrate` | Run database migrations |
 | `npm run db:studio` | Open Prisma Studio |
+| `npm run migrate` | Import data from JSON files |
 
 ## 📚 Documentation
 
-- 📖 [Development Guide](docs/DEVELOPMENT_GUIDE.md) - Complete setup and development instructions
-- 🚀 [Deployment Guide](docs/DEPLOYMENT_GUIDE.md) - Deploy to Vercel
-- 🎨 [UX Technical Reference](docs/UX_TECHNICAL_REFERENCE.md) - Design system and components
-- 🧹 [Cleanup Opportunities](docs/CLEANUP_OPPORTUNITIES.md) - Future optimization tasks
-- 📁 [Public Folder Structure](docs/PUBLIC_FOLDER_STRUCTURE.md) - Asset organization
+| Document | Purpose | Description |
+|----------|---------|-------------|
+| [📊 Project Status](docs/PROJECT_STATUS.md) | Current status & roadmap | Production readiness, completed features, next steps |
+| [🚀 Getting Started](docs/GETTING_STARTED.md) | Setup & deployment | Complete setup guide, environment config, Vercel deployment |
+| [🔧 Technical Reference](docs/TECHNICAL_REFERENCE.md) | Developer docs | Design system, database schema, API endpoints, code patterns |
+
+### Quick Links
+- **Current Status**: [View project status →](docs/PROJECT_STATUS.md)
+- **Setup Guide**: [Get started →](docs/GETTING_STARTED.md)
+- **Technical Docs**: [Developer reference →](docs/TECHNICAL_REFERENCE.md)
 
 ## 🤝 Contributing
 

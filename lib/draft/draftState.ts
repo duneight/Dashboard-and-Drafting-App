@@ -16,7 +16,8 @@ export class DraftStateManager {
       picks: [],
       selectedPlayers: new Set(),
       currentPick: 1,
-      draftProgress: 0
+      draftProgress: 0,
+      pickSwaps: []
     }
   }
 
@@ -93,7 +94,8 @@ export class DraftStateManager {
       picks,
       selectedPlayers,
       currentPick: this.getCurrentPickNumber(picks),
-      draftProgress: this.calculateProgress(picks)
+      draftProgress: this.calculateProgress(picks),
+      pickSwaps: []
     }
   }
 

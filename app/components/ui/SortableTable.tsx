@@ -1,7 +1,7 @@
 'use client'
 
 import { ReactNode, useState } from 'react'
-import { ChevronUp, ChevronDown, Search, Filter, X } from 'lucide-react'
+import { ChevronUp, ChevronDown, Search, Filter, X, HelpCircle } from 'lucide-react'
 
 interface Column {
   key: string
@@ -11,6 +11,9 @@ interface Column {
   filterType?: 'text' | 'select' | 'number'
   filterOptions?: { value: string; label: string }[]
   render?: (value: any, row: any) => ReactNode
+  tooltip?: string
+  showTooltipIcon?: boolean
+  className?: string
 }
 
 interface SortableTableProps {
@@ -18,6 +21,9 @@ interface SortableTableProps {
   columns: Column[]
   className?: string
   searchPlaceholder?: string
+  showSearch?: boolean
+  defaultSortColumn?: string
+  defaultSortDirection?: SortDirection
 }
 
 type SortDirection = 'asc' | 'desc' | null
@@ -26,10 +32,13 @@ export function SortableTable({
   data, 
   columns, 
   className = '', 
-  searchPlaceholder = 'Search...' 
+  searchPlaceholder = 'Search...',
+  showSearch = true,
+  defaultSortColumn,
+  defaultSortDirection = 'asc'
 }: SortableTableProps) {
-  const [sortColumn, setSortColumn] = useState<string | null>(null)
-  const [sortDirection, setSortDirection] = useState<SortDirection>(null)
+  const [sortColumn, setSortColumn] = useState<string | null>(defaultSortColumn || null)
+  const [sortDirection, setSortDirection] = useState<SortDirection>(defaultSortColumn ? defaultSortDirection : null)
   const [searchTerm, setSearchTerm] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [showFilters, setShowFilters] = useState(false)
@@ -114,52 +123,54 @@ export function SortableTable({
   return (
     <div className={`space-y-4 ${className}`}>
       {/* Search and Filter Bar */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="text"
-            placeholder={searchPlaceholder}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-          />
-        </div>
-        
-        <div className="flex items-center gap-2">
-          {filterableColumns.length > 0 && (
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
-                showFilters 
-                  ? 'bg-primary text-primary-foreground border-primary' 
-                  : 'bg-background text-foreground border-border hover:bg-muted'
-              }`}
-            >
-              <Filter className="h-4 w-4" />
-              Filters
-              {hasActiveFilters && (
-                <span className="ml-1 px-1.5 py-0.5 text-xs bg-accent text-accent-foreground rounded-full">
-                  {Object.values(filters).filter(v => v !== '').length + (searchTerm ? 1 : 0)}
-                </span>
-              )}
-            </button>
-          )}
+      {showSearch && (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder={searchPlaceholder}
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-border rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+            />
+          </div>
           
-          {hasActiveFilters && (
-            <button
-              onClick={clearFilters}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-background text-foreground hover:bg-muted transition-colors"
-            >
-              <X className="h-4 w-4" />
-              Clear
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {filterableColumns.length > 0 && (
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
+                  showFilters 
+                    ? 'bg-primary text-primary-foreground border-primary' 
+                    : 'bg-background text-foreground border-border hover:bg-muted'
+                }`}
+              >
+                <Filter className="h-4 w-4" />
+                Filters
+                {hasActiveFilters && (
+                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-accent text-accent-foreground rounded-full">
+                    {Object.values(filters).filter(v => v !== '').length + (searchTerm ? 1 : 0)}
+                  </span>
+                )}
+              </button>
+            )}
+            
+            {hasActiveFilters && (
+              <button
+                onClick={clearFilters}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-background text-foreground hover:bg-muted transition-colors"
+              >
+                <X className="h-4 w-4" />
+                Clear
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Filter Dropdowns */}
-      {showFilters && filterableColumns.length > 0 && (
+      {showSearch && showFilters && filterableColumns.length > 0 && (
         <div className="grid grid-cols-1 gap-4 p-4 bg-muted rounded-lg sm:grid-cols-2 lg:grid-cols-3">
           {filterableColumns.map((column) => (
             <div key={column.key}>
@@ -194,25 +205,35 @@ export function SortableTable({
       )}
 
       {/* Results Count */}
-      <div className="text-sm text-muted-foreground">
-        Showing {sortedData.length} of {data.length} results
-      </div>
+      {showSearch && (
+        <div className="text-sm text-muted-foreground">
+          Showing {sortedData.length} of {data.length} results
+        </div>
+      )}
 
       {/* Table */}
       <div className="overflow-x-auto">
-        <table className="w-full text-base">
+        <table className="w-full text-sm lg:text-base table-fixed">
           <thead>
             <tr className="border-b-2 border-border">
               {columns.map((column) => (
                 <th
                   key={column.key}
-                  className={`text-left py-4 px-6 text-muted-foreground font-semibold ${
+                  className={`text-left py-3 px-2 lg:py-4 lg:px-6 text-muted-foreground font-semibold text-sm lg:text-base ${
                     column.sortable ? 'sortable-header cursor-pointer hover:text-foreground' : ''
-                  }`}
+                  } ${column.className || ''}`}
                   onClick={() => column.sortable && handleSort(column.key)}
+                  title={column.tooltip || undefined}
+                  data-tooltip={column.tooltip || undefined}
                 >
-                  <div className="flex items-center gap-2">
+                  <div 
+                    className="flex items-center gap-2"
+                    onMouseEnter={() => column.tooltip && console.log('Tooltip:', column.tooltip)}
+                  >
                     {column.label}
+                    {column.showTooltipIcon && column.tooltip && (
+                      <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                    )}
                     {column.sortable && getSortIcon(column.key)}
                   </div>
                 </th>
@@ -228,7 +249,7 @@ export function SortableTable({
                 }`}
               >
                 {columns.map((column) => (
-                  <td key={column.key} className="py-4 px-6">
+                  <td key={column.key} className={`py-3 px-2 lg:py-4 lg:px-6 text-sm lg:text-base ${column.className || ''}`}>
                     {column.render ? column.render(row[column.key], row) : row[column.key]}
                   </td>
                 ))}

@@ -1,6 +1,3 @@
-// This file was moved from the root directory
-// Prisma schema for Fantasy NHL Stats database
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,59 +8,52 @@ datasource db {
 }
 
 model Game {
-  id          String   @id @default(cuid())
-  gameKey     String   @unique
-  gameId      Int      @unique
-  name        String
-  code        String
-  type        String
-  url         String?
-  season      String
-  isGameOver  Boolean  @default(false)
-  isRegistrationOver Boolean @default(false)
-  isPlayoffsOver Boolean @default(false)
-  isOffseason Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  leagues League[]
+  id                 String   @id @default(cuid())
+  gameKey            String   @unique
+  gameId             Int      @unique
+  name               String
+  code               String
+  type               String
+  url                String?
+  season             String
+  isGameOver         Boolean  @default(false)
+  isRegistrationOver Boolean  @default(false)
+  isPlayoffsOver     Boolean  @default(false)
+  isOffseason        Boolean  @default(false)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  leagues            League[]
 
   @@map("games")
 }
 
 model League {
-  id                String   @id @default(cuid())
-  leagueKey         String   @unique
-  leagueId          Int      @unique
-  name              String
-  url               String?
-  logoUrl           String?
-  password          String?
-  draftStatus       String
-  numTeams          Int
-  editKey           String?
-  weeklyDeadline    String?
-  leagueUpdateTimestamp String?
-  scoringType       String?
-  leagueType        String?
-  renew             String?
-  renewed           String?
-  irisGroupChatId   String?
-  allowAddToDlExtraPos Int?
-  isProLeague       Boolean  @default(false)
-  isCashLeague      Boolean  @default(false)
-  currentMatchupPeriod Int?
-  isFinished        Boolean  @default(false)
-  isApiFootball     Boolean  @default(false)
-  apiSelections     String?
-  gameId            String?
-  season            String
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  game   Game?  @relation(fields: [gameId], references: [id])
-  teams  Team[]
-  matchups Matchup[]
+  id              String    @id @default(cuid())
+  leagueKey       String    @unique
+  leagueId        Int       @unique
+  name            String
+  url             String?
+  logoUrl         String?
+  draftStatus     String
+  numTeams        Int
+  scoringType     String?
+  leagueType      String?
+  isFinished      Boolean   @default(false)
+  gameId          String?
+  season          String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  currentWeek     Int?
+  endDate         String?
+  endWeek         Int?
+  rosterPositions String?
+  settings        String?
+  startDate       String?
+  startWeek       Int?
+  statCategories  String?
+  game            Game?     @relation(fields: [gameId], references: [id])
+  matchups        Matchup[]
+  teams           Team[]
 
   @@index([season])
   @@index([gameId])
@@ -71,308 +61,170 @@ model League {
 }
 
 model Team {
-  id                String   @id @default(cuid())
-  teamKey           String   @unique
-  teamId            Int      @unique
-  name              String
-  isOwnedByCurrentLogin Boolean @default(false)
-  url               String?
-  teamLogos         String?
-  waiverPriority    Int?
-  numberOfMoves     Int?
-  numberOfTrades    Int?
-  clinchedPlayoffs  Boolean  @default(false)
-  leagueScoringType String?
-  managers          String?  // JSON string of managers
-  managerNickname   String?
-  managerGuid       String?
-  managerEmail      String?
-  managerImageUrl   String?
-  managerIsCommissioner Boolean @default(false)
-  managerIsCurrentLogin Boolean @default(false)
-  wins              Int      @default(0)
-  losses            Int      @default(0)
-  ties              Int      @default(0)
-  percentage        Float    @default(0)
-  pointsFor         Float    @default(0)
-  pointsAgainst     Float    @default(0)
-  rank              Int?
-  isFinished        Boolean  @default(false)
-  leagueId          String
-  season            String
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                    String    @id @default(cuid())
+  teamKey               String
+  teamId                Int
+  name                  String
+  url                   String?
+  numberOfMoves         Int?
+  numberOfTrades        Int?
+  clinchedPlayoffs      Boolean   @default(false)
+  managerNickname       String?
+  managerEmail          String?
+  managerIsCommissioner Boolean   @default(false)
+  wins                  Int       @default(0)
+  losses                Int       @default(0)
+  ties                  Int       @default(0)
+  percentage            Float     @default(0)
+  pointsFor             Float     @default(0)
+  pointsAgainst         Float     @default(0)
+  rank                  Int?
+  isFinished            Boolean   @default(false)
+  leagueId              String
+  season                String
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  matchupsAsTeam1       Matchup[] @relation("Team1Matchups")
+  matchupsAsTeam2       Matchup[] @relation("Team2Matchups")
+  league                League    @relation(fields: [leagueId], references: [id])
 
-  league League @relation(fields: [leagueId], references: [id])
-  weeklyStats WeeklyStat[]
-  matchupsAsTeam1 Matchup[] @relation("Team1Matchups")
-  matchupsAsTeam2 Matchup[] @relation("Team2Matchups")
-
+  @@unique([teamKey, season])
+  @@unique([teamId, season])
   @@index([season])
   @@index([leagueId, season])
   @@index([managerNickname])
   @@map("teams")
 }
 
-model Manager {
-  id                String   @id @default(cuid())
-  managerId         String   @unique
-  nickname          String?
-  guid              String?
-  email             String?
-  imageUrl          String?
-  isCommissioner    Boolean  @default(false)
-  isCurrentLogin    Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@map("managers")
-}
-
-model WeeklyScoreboard {
-  id          String   @id @default(cuid())
-  leagueId    String
-  week        Int
-  season      String
-  isPlayoffs  Boolean  @default(false)
-  isConsolation Boolean @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@unique([leagueId, week, season])
-  @@map("weekly_scoreboards")
-}
-
-model WeeklyTeamStats {
-  id                String   @id @default(cuid())
-  teamKey           String
-  week              Int
-  season            String
-  points            Float    @default(0)
-  projectedPoints   Float?
-  isPlayoffs        Boolean  @default(false)
-  isConsolation     Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@unique([teamKey, week, season])
-  @@map("weekly_team_stats")
-}
-
-model WeeklyPlayerStats {
-  id                String   @id @default(cuid())
-  playerKey         String
-  teamKey           String
-  week              Int
-  season            String
-  points            Float    @default(0)
-  projectedPoints   Float?
-  isPlayoffs        Boolean  @default(false)
-  isConsolation     Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@unique([playerKey, teamKey, week, season])
-  @@map("weekly_player_stats")
-}
-
-model Player {
-  id                String   @id @default(cuid())
-  playerKey         String   @unique
-  playerId          Int      @unique
-  name              String
-  editorialTeamKey  String?
-  editorialTeamFullName String?
-  editorialTeamAbbr String?
-  uniformNumber     String?
-  displayPosition   String?
-  headshot          String?
-  imageUrl          String?
-  isUndroppable     Boolean  @default(false)
-  positionType      String?
-  primaryPosition   String?
-  eligiblePositions String?  // JSON string of positions
-  hasPlayerNotes    Boolean  @default(false)
-  hasRecentPlayerNotes Boolean @default(false)
-  status            String?
-  statusFull        String?
-  injuryNote        String?
-  onDisabledList     Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  stats PlayerStats[]
-
-  @@map("players")
-}
-
-model PlayerStats {
-  id                String   @id @default(cuid())
-  playerKey         String
-  season            String
-  week              Int?
-  stats             String   // JSON string of stats
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  player Player @relation(fields: [playerKey], references: [playerKey])
-
-  @@unique([playerKey, season, week])
-  @@map("player_stats")
-}
-
-model StatCategory {
-  id                String   @id @default(cuid())
-  statId            Int      @unique
-  name              String
-  displayName       String
-  sortOrder         Int
-  positionType      String?
-  isReversed        Boolean  @default(false)
-  isOnlyDisplayStat Boolean @default(false)
-  isExcludedFromDisplay Boolean @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@map("stat_categories")
-}
-
-model RosterPosition {
-  id                String   @id @default(cuid())
-  position          String   @unique
-  positionType      String
-  abbreviation      String?
-  displayName       String?
-  isBench           Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@map("roster_positions")
-}
-
-model Transaction {
-  id                String   @id @default(cuid())
-  transactionKey    String   @unique
-  transactionId     Int      @unique
-  type              String
-  status            String?
-  timestamp         String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@map("transactions")
-}
-
-model DraftResult {
-  id                String   @id @default(cuid())
-  pick              Int
-  round             Int
-  teamKey           String
-  playerKey         String?
-  playerName        String?
-  position          String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@unique([pick, teamKey])
-  @@map("draft_results")
-}
-
 model Matchup {
-  id                String   @id @default(cuid())
-  matchupId         Int      @unique
-  week              Int
-  status             String?
-  isPlayoffs         Boolean  @default(false)
-  isConsolation      Boolean  @default(false)
-  isTied             Boolean  @default(false)
-  winnerTeamKey      String?
-  leagueId           String
-  season             String
-  team1Key           String
-  team2Key           String
-  team1Points        Float?
-  team2Points        Float?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id            String   @id @default(cuid())
+  matchupId     Int
+  week          Int
+  status        String?
+  isPlayoffs    Boolean  @default(false)
+  isConsolation Boolean  @default(false)
+  isTied        Boolean  @default(false)
+  winnerTeamKey String?
+  leagueId      String
+  season        String
+  team1Key      String
+  team2Key      String
+  team1Points   Float?
+  team2Points   Float?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  statWinners   String?
+  team1Stats    String?
+  team2Stats    String?
+  weekEnd       String?
+  weekStart     String?
+  league        League   @relation(fields: [leagueId], references: [id])
+  team1         Team     @relation("Team1Matchups", fields: [team1Key, season], references: [teamKey, season])
+  team2         Team     @relation("Team2Matchups", fields: [team2Key, season], references: [teamKey, season])
 
-  league League @relation(fields: [leagueId], references: [id])
-  team1  Team   @relation("Team1Matchups", fields: [team1Key], references: [teamKey])
-  team2  Team   @relation("Team2Matchups", fields: [team2Key], references: [teamKey])
-
+  @@unique([matchupId, season])
   @@index([leagueId, week])
   @@index([season])
   @@index([isPlayoffs])
   @@index([winnerTeamKey])
+  @@index([team1Key, season])
+  @@index([team2Key, season])
   @@map("matchups")
 }
 
-model WeeklyStat {
-  id                String   @id @default(cuid())
-  teamKey           String
-  week              Int
-  season            String
-  points            Float    @default(0)
-  projectedPoints   Float?
-  isPlayoffs        Boolean  @default(false)
-  isConsolation     Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+model Transaction {
+  id             String   @id @default(cuid())
+  transactionKey String   @unique
+  transactionId  Int
+  type           String
+  status         String?
+  timestamp      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  faabBid        Int?
+  picks          String?
+  players        String?
+  tradeeTeamKey  String?
+  tradeeTeamName String?
+  traderTeamKey  String?
+  traderTeamName String?
+  season         String
 
-  team Team @relation(fields: [teamKey], references: [teamKey])
-
-  @@unique([teamKey, week, season])
-  @@index([season])
-  @@index([teamKey, season])
-  @@index([week])
-  @@map("weekly_stats")
+  @@unique([transactionId, season])
+  @@map("transactions")
 }
 
-// Draft-related models for keeper draft functionality
-model DraftSession {
-  id                String   @id @default(cuid())
-  year              String   @unique // e.g., "2025"
-  status            String   @default("active") // active, completed, paused
-  settings          String   // JSON string of league settings
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+model DraftResult {
+  id                 String   @id @default(cuid())
+  pick               Int
+  round              Int
+  teamKey            String
+  playerKey          String?
+  position           String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  editorialPlayerKey String?
+  firstName          String?
+  fullName           String?
+  headshotUrl        String?
+  isUndroppable      Boolean  @default(false)
+  lastName           String?
+  nhlTeam            String?
+  nhlTeamFullName    String?
+  playerId           Int?
+  playerUrl          String?
+  positionType       String?
+  uniformNumber      String?
+  season             String
 
-  picks             DraftPick[]
-  snapshots         DraftSnapshot[]
+  @@unique([pick, teamKey, season])
+  @@index([season])
+  @@index([nhlTeam])
+  @@index([position])
+  @@map("draft_results")
+}
+
+model DraftSession {
+  id        String          @id @default(cuid())
+  year      String          @unique
+  status    String          @default("active")
+  settings  String
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  picks     DraftPick[]
+  snapshots DraftSnapshot[]
 
   @@map("draft_sessions")
 }
 
 model DraftPick {
-  id                String   @id @default(cuid())
-  pick              Int      // Overall pick number (1-250)
-  round             Int      // Round number (1-25)
-  teamIndex         Int      // Team index (0-9)
-  teamName          String   // Team name for display
-  playerName        String?  // Player name
-  playerRank        Int?     // Player's overall rank
-  playerTeam        String?  // Player's NHL team
-  playerPosition    String?  // Player's position
-  averagePick       Float?   // Player's average draft position
-  pickedAt          DateTime @default(now())
-  sessionId         String
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  session           DraftSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id             String       @id @default(cuid())
+  pick           Int
+  round          Int
+  teamIndex      Int
+  teamName       String
+  playerName     String?
+  playerRank     Int?
+  playerTeam     String?
+  playerPosition String?
+  averagePick    Float?
+  pickedAt       DateTime     @default(now())
+  sessionId      String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  session        DraftSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, pick])
   @@map("draft_picks")
 }
 
 model DraftSnapshot {
-  id                String   @id @default(cuid())
-  snapshotData      String   // JSON string of complete draft state
-  description       String?  // Optional description of snapshot
-  createdAt         DateTime @default(now())
-  sessionId         String
-
-  session           DraftSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id           String       @id @default(cuid())
+  snapshotData String
+  description  String?
+  createdAt    DateTime     @default(now())
+  sessionId    String
+  session      DraftSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@map("draft_snapshots")
 }

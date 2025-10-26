@@ -1,140 +1,155 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { WallOfShameAnalytics } from '@/lib/analytics/wallOfShame'
+import { SharedTeamData } from '@/lib/analytics/sharedData'
 import { WALL_OF_SHAME_CATEGORIES } from '@/lib/constants'
 import { rateLimit } from '@/lib/rateLimit'
-import type { ApiResponse } from '@/types/yahoo'
 
 const limiter = rateLimit({ maxRequests: 30, windowMs: 60000 })
 
 export async function GET(request: NextRequest) {
+  const requestId = Math.random().toString(36).substr(2, 9)
+  console.log(`🔄 [${requestId}] Wall of Shame API called`)
+  
   try {
     // Apply rate limiting
     const rateLimitResult = await limiter(request)
-    if (rateLimitResult) return rateLimitResult
+    if (rateLimitResult) {
+      console.log(`⚠️ [${requestId}] Wall of Shame rate limited`)
+      return rateLimitResult
+    }
 
     const { searchParams } = new URL(request.url)
     const category = searchParams.get('category')
-    const season = searchParams.get('season')
 
     const analytics = new WallOfShameAnalytics()
 
+    // If specific category requested
     if (category) {
-      // Return specific category
       const categoryConfig = WALL_OF_SHAME_CATEGORIES.find(c => c.id === category)
       if (!categoryConfig) {
         return NextResponse.json({
           success: false,
           error: 'Category not found',
-        } as ApiResponse, { status: 404 })
+        }, { status: 404 })
       }
 
-      let data
+      let data: any[] = []
       switch (category) {
-        case 'eternal-loser':
-          data = await analytics.getEternalLoser()
+        case 'eternal-last':
+          data = await analytics.getEternalLast()
           break
-        case 'last-place-larry':
-          data = await analytics.getLastPlaceLarry()
+        case 'playoff-choker':
+          data = await analytics.getPlayoffChoker()
           break
-        case 'the-unlucky-one':
-          data = await analytics.getTheUnluckyOne()
-          break
-        case 'worst-record':
-          data = await analytics.getWorstRecord()
-          break
-        case 'point-desert':
-          data = await analytics.getPointDesert()
+        case 'close-but-no-cigar':
+          data = await analytics.getCloseButNoCigar()
           break
         case 'rock-bottom':
           data = await analytics.getRockBottom()
           break
-        case 'playoff-choke':
-          data = await analytics.getPlayoffChoke()
+        case 'the-collapse':
+          data = await analytics.getTheCollapse()
           break
-        case 'losing-streak':
-          data = await analytics.getLosingStreak()
+        case 'brick-hands':
+          data = await analytics.getBrickHands()
           break
-        case 'waiver-warrior':
-          data = await analytics.getWaiverWarrior()
+        case 'the-heartbreak':
+          data = await analytics.getTheHeartbreak()
           break
-        case 'the-overthinker':
-          data = await analytics.getTheOverthinker()
+        case 'glass-cannon':
+          data = await analytics.getGlassCannon()
           break
-        case 'inactive-owner':
-          data = await analytics.getInactiveOwner()
-          break
-        case 'goalie-graveyard':
-          data = await analytics.getGoalieGraveyard()
-          break
-        case 'cant-buy-a-goal':
-          data = await analytics.getCantBuyAGoal()
-          break
-        case 'penalty-box':
-          data = await analytics.getPenaltyBox()
-          break
-        case 'the-minus':
-          data = await analytics.getTheMinus()
-          break
-        case 'blowout-victim':
-          data = await analytics.getBlowoutVictim()
-          break
-        case 'never-stood-a-chance':
-          data = await analytics.getNeverStoodAChance()
-          break
-        case 'the-heartbreaker':
-          data = await analytics.getTheHeartbreaker()
-          break
-        case 'commissioner-fails':
-          data = await analytics.getCommissionerFails()
-          break
-        case 'cursed-team-name':
-          data = await analytics.getCursedTeamName()
+        case 'the-snooze':
+          data = await analytics.getTheSnooze()
           break
         default:
-          return NextResponse.json({
-            success: false,
-            error: 'Category not implemented',
-          } as ApiResponse, { status: 404 })
-      }
-
-      // Filter by season if specified
-      if (season && data) {
-        data = data.filter(entry => entry.season === season)
+          data = []
       }
 
       return NextResponse.json({
         success: true,
-        data: {
-          category: categoryConfig,
-          entries: data,
-        },
-      } as ApiResponse)
-    } else {
-      // Return all categories
-      const allCategories = await analytics.getAllCategories()
-
-      // Filter by season if specified
-      if (season) {
-        Object.keys(allCategories).forEach(key => {
-          allCategories[key] = allCategories[key].filter(entry => entry.season === season)
-        })
-      }
-
-      return NextResponse.json({
-        success: true,
-        data: {
-          categories: WALL_OF_SHAME_CATEGORIES,
-          data: allCategories,
-        },
-      } as ApiResponse)
+        categoryId: category,
+        data,
+      })
     }
 
+    // Return all categories
+    console.log('🔄 Wall of Shame: Starting data fetch...')
+    
+    // Fetch shared data ONCE - SharedTeamData handles its own caching
+    const [sharedTeamData, sharedMatchupData] = await Promise.all([
+      SharedTeamData.getAllTeams(),
+      SharedTeamData.getAllMatchups()
+    ])
+    
+    console.log(`📊 Wall of Shame: Got ${sharedTeamData.length} teams, ${sharedMatchupData.length} matchups`)
+    
+    // Parallelize all category fetches, passing shared data
+    const categoryPromises = WALL_OF_SHAME_CATEGORIES.map(async (categoryConfig) => {
+      try {
+        let data: any[] = []
+        switch (categoryConfig.id) {
+          case 'eternal-last':
+            data = await analytics.getEternalLast(sharedTeamData)
+            break
+          case 'playoff-choker':
+            data = await analytics.getPlayoffChoker(sharedMatchupData, sharedTeamData)
+            break
+          case 'close-but-no-cigar':
+            data = await analytics.getCloseButNoCigar(sharedTeamData)
+            break
+          case 'rock-bottom':
+            data = await analytics.getRockBottom(sharedTeamData)
+            break
+          case 'the-collapse':
+            data = await analytics.getTheCollapse(sharedMatchupData)
+            break
+          case 'brick-hands':
+            data = await analytics.getBrickHands(sharedTeamData)
+            break
+          case 'the-heartbreak':
+            data = await analytics.getTheHeartbreak(sharedMatchupData)
+            break
+          case 'glass-cannon':
+            data = await analytics.getGlassCannon(sharedTeamData)
+            break
+          case 'the-snooze':
+            data = await analytics.getTheSnooze(sharedMatchupData)
+            break
+          default:
+            data = []
+        }
+        
+        return {
+          id: categoryConfig.id,
+          name: categoryConfig.name,
+          description: categoryConfig.description,
+          type: categoryConfig.type,
+          entries: data.slice(0, 3)
+        }
+      } catch (error) {
+        console.error(`Error fetching data for category ${categoryConfig.id}:`, error)
+        return {
+          id: categoryConfig.id,
+          name: categoryConfig.name,
+          description: categoryConfig.description,
+          type: categoryConfig.type,
+          entries: []
+        }
+      }
+    })
+    
+    const results = await Promise.all(categoryPromises)
+
+    return NextResponse.json({
+      success: true,
+      categories: results,
+    })
   } catch (error) {
     console.error('Error in wall-of-shame route:', error)
-    
     return NextResponse.json({
       success: false,
       error: error instanceof Error ? error.message : 'Unknown error occurred',
-    } as ApiResponse, { status: 500 })
+    }, { status: 500 })
   }
 }

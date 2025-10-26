@@ -60,6 +60,7 @@ export interface DraftState {
   selectedPlayers: Set<string>
   currentPick: number
   draftProgress: number
+  pickSwaps?: PickSwap[]
 }
 
 export interface PositionBalance {
@@ -83,6 +84,12 @@ export interface DraftPrompt {
   action: () => void
 }
 
+export interface PickSwap {
+  round: number
+  teamIndex: number
+  swappedToTeamIndex: number
+}
+
 export interface DraftSnapshot {
   id: string
   picks: DraftPick[]
@@ -100,7 +107,7 @@ export interface DraftSession {
   updatedAt: Date
 }
 
-export type TabType = 'draft-board' | 'best-available' | 'position-analysis' | 'team-rosters' | 'draft-trends'
+export type TabType = 'draft-board' | 'best-available' | 'position-analysis' | 'team-rosters' | 'keepers' | 'pick-swaps'
 
 export interface DraftContextType {
   // State

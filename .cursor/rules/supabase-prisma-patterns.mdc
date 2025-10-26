@@ -287,6 +287,324 @@ export function handlePrismaError(error: any) {
   return new AppError('Database error', 500, 'DB_ERROR');
 }
 ```
+
+## Prisma Performance Optimization Patterns
+
+### 1. Parallel Query Execution
+```tsx
+// ❌ BAD: Sequential queries (slow)
+async function getDashboardData() {
+  const users = await prisma.user.findMany()
+  const posts = await prisma.post.findMany()
+  const comments = await prisma.comment.findMany()
+  // Takes 3x longer than necessary!
+  return { users, posts, comments }
+}
+
+// ✅ GOOD: Parallel queries (fast)
+async function getDashboardData() {
+  const [users, posts, comments] = await Promise.all([
+    prisma.user.findMany(),
+    prisma.post.findMany(),
+    prisma.comment.findMany()
+  ])
+  return { users, posts, comments }
+}
+
+// ✅ GOOD: Parallel execution with map
+async function getMultipleSeasonData(seasons: string[]) {
+  const results = await Promise.all(
+    seasons.map(season => 
+      prisma.matchup.findMany({ where: { season } })
+    )
+  )
+  return results
+}
+```
+
+### 2. Avoid N+1 Queries - Use Include/Select
+```tsx
+// ❌ BAD: N+1 query problem
+async function getUsersWithPosts() {
+  const users = await prisma.user.findMany()
+  
+  for (const user of users) {
+    // This runs a separate query for EACH user!
+    user.posts = await prisma.post.findMany({
+      where: { userId: user.id }
+    })
+  }
+  return users
+}
+
+// ✅ GOOD: Single query with include
+async function getUsersWithPosts() {
+  return await prisma.user.findMany({
+    include: {
+      posts: true // Fetches all posts in a single query
+    }
+  })
+}
+
+// ✅ GOOD: Select only needed fields
+async function getUsersWithPostCount() {
+  return await prisma.user.findMany({
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      _count: {
+        select: { posts: true }
+      }
+    }
+  })
+}
+```
+
+### 3. Database Indexing Strategy
+```prisma
+// ✅ GOOD: Strategic index placement
+
+model Matchup {
+  id            String   @id @default(cuid())
+  season        String
+  week          Int
+  team1Points   Float?
+  team2Points   Float?
+  isPlayoffs    Boolean  @default(false)
+  
+  // Composite indexes for frequently queried combinations
+  @@index([season, week]) // Queries filtered by both season and week
+  @@index([season, isPlayoffs]) // Playoff queries by season
+  @@index([season, team1Points, team2Points]) // Score comparisons
+  @@map("matchups")
+}
+
+model Team {
+  id              String  @id @default(cuid())
+  teamKey         String
+  season          String
+  managerNickname String?
+  rank            Int?
+  isFinished      Boolean @default(false)
+  
+  // Indexes for common query patterns
+  @@index([season]) // Filter by season
+  @@index([managerNickname, season]) // Manager stats by season
+  @@index([rank, isFinished]) // Final standings
+  @@index([season, rank]) // Season rankings
+  @@unique([teamKey, season])
+  @@map("teams")
+}
+```
+
+**Indexing Best Practices:**
+- Index columns used in WHERE clauses
+- Index columns used in JOIN conditions
+- Index columns used in ORDER BY
+- Use composite indexes for multi-column queries
+- Don't over-index - each index slows down writes
+- Monitor query performance with EXPLAIN ANALYZE
+
+### 4. Aggregations Instead of Multiple Queries
+```tsx
+// ❌ BAD: Multiple queries for aggregation
+async function getSeasonStats(season: string) {
+  const matchups = await prisma.matchup.findMany({ where: { season } })
+  
+  // Processing in JavaScript (slow for large datasets)
+  const avgScore = matchups.reduce((sum, m) => 
+    sum + (m.team1Points + m.team2Points) / 2, 0) / matchups.length
+  
+  return { avgScore }
+}
+
+// ✅ GOOD: Database aggregation
+async function getSeasonStats(season: string) {
+  return await prisma.matchup.aggregate({
+    where: { season },
+    _avg: {
+      team1Points: true,
+      team2Points: true
+    },
+    _max: {
+      team1Points: true,
+      team2Points: true
+    },
+    _min: {
+      team1Points: true,
+      team2Points: true
+    }
+  })
+}
+
+// ✅ BETTER: GroupBy for multiple seasons at once
+async function getAllSeasonsStats() {
+  return await prisma.matchup.groupBy({
+    by: ['season', 'week'],
+    where: {
+      AND: [
+        { team1Points: { not: null } },
+        { team2Points: { not: null } }
+      ]
+    },
+    _avg: {
+      team1Points: true,
+      team2Points: true
+    },
+    _count: {
+      id: true
+    }
+  })
+}
+```
+
+### 5. Batch Operations
+```tsx
+// ❌ BAD: Individual creates (slow)
+async function createMultipleUsers(users: UserInput[]) {
+  for (const user of users) {
+    await prisma.user.create({ data: user })
+  }
+}
+
+// ✅ GOOD: Batch create
+async function createMultipleUsers(users: UserInput[]) {
+  return await prisma.user.createMany({
+    data: users,
+    skipDuplicates: true // Skip if unique constraint fails
+  })
+}
+
+// ✅ GOOD: Batch updates
+async function updateMultipleUsers(userIds: string[], updates: UserUpdate) {
+  return await prisma.user.updateMany({
+    where: {
+      id: { in: userIds }
+    },
+    data: updates
+  })
+}
+```
+
+### 6. Cursor-Based Pagination (Efficient)
+```tsx
+// ❌ BAD: Offset pagination (slow for large datasets)
+async function getUsers(page: number, limit: number) {
+  return await prisma.user.findMany({
+    skip: page * limit, // Gets slower as page number increases
+    take: limit
+  })
+}
+
+// ✅ GOOD: Cursor-based pagination (fast at any position)
+async function getUsers(cursor?: string, limit: number = 20) {
+  return await prisma.user.findMany({
+    take: limit,
+    skip: cursor ? 1 : 0, // Skip the cursor
+    cursor: cursor ? { id: cursor } : undefined,
+    orderBy: { id: 'asc' }
+  })
+}
+```
+
+### 7. Transaction Performance
+```tsx
+// ✅ GOOD: Use transactions for related operations
+async function createUserWithPosts(userData: UserInput, posts: PostInput[]) {
+  return await prisma.$transaction(async (tx) => {
+    const user = await tx.user.create({ data: userData })
+    
+    const createdPosts = await tx.post.createMany({
+      data: posts.map(post => ({ ...post, userId: user.id }))
+    })
+    
+    return { user, createdPosts }
+  })
+}
+
+// ✅ GOOD: Interactive transactions for complex logic
+async function transferPoints(fromUserId: string, toUserId: string, amount: number) {
+  return await prisma.$transaction(async (tx) => {
+    const fromUser = await tx.user.findUnique({ where: { id: fromUserId } })
+    
+    if (fromUser.points < amount) {
+      throw new Error('Insufficient points')
+    }
+    
+    await tx.user.update({
+      where: { id: fromUserId },
+      data: { points: { decrement: amount } }
+    })
+    
+    await tx.user.update({
+      where: { id: toUserId },
+      data: { points: { increment: amount } }
+    })
+  })
+}
+```
+
+### 8. Connection Pooling Best Practices
+```tsx
+// ✅ GOOD: Prisma connection pooling configuration
+// prisma/schema.prisma
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // Connection pooling with PgBouncer
+  // Example: postgresql://user:password@localhost:6432/mydb?pgbouncer=true
+}
+
+// For serverless environments (Vercel, Lambda)
+// Use connection pooling URL with limited connections
+// DATABASE_URL="postgresql://user:pass@host:5432/db?connection_limit=5&pool_timeout=20"
+```
+
+### Performance Monitoring
+```tsx
+// ✅ GOOD: Enable query logging in development
+const prisma = new PrismaClient({
+  log: [
+    {
+      emit: 'event',
+      level: 'query',
+    },
+  ],
+})
+
+prisma.$on('query', (e) => {
+  console.log('Query: ' + e.query)
+  console.log('Duration: ' + e.duration + 'ms')
+})
+```
+
+## Key Takeaways
+
+### Sequential vs Parallel Execution
+- **Problem**: `await` in loops causes sequential execution
+- **Solution**: Use `Promise.all()` for independent queries
+- **Impact**: 5-10x faster for multiple queries
+
+### N+1 Query Problem
+- **Problem**: Separate query for each related item
+- **Solution**: Use `include` or `select` to fetch relations
+- **Impact**: Reduces queries from N+1 to 1
+
+### Database Indexes
+- **Problem**: Full table scans on filtered queries
+- **Solution**: Add indexes on frequently queried columns
+- **Impact**: 2-5x faster query execution
+
+### Aggregations
+- **Problem**: Fetching all data and aggregating in JavaScript
+- **Solution**: Use database aggregations (`aggregate`, `groupBy`)
+- **Impact**: 10-100x faster for large datasets
+
+### Batch Operations
+- **Problem**: Individual creates/updates in loops
+- **Solution**: Use `createMany`, `updateMany`, `deleteMany`
+- **Impact**: 5-20x faster for multiple operations
 description:
 globs:
 alwaysApply: false

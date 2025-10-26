@@ -1,881 +1,448 @@
 import { prisma } from '@/lib/db/prisma'
-import { WALL_OF_SHAME_CATEGORIES } from '@/lib/constants'
-import type { WallOfShameEntry } from '@/types/yahoo'
+import { MatchupStatsParser } from '@/lib/services/matchupStatsParser'
+import { SharedTeamData } from './sharedData'
+import { getManagerAvatarUrl, getManagerDisplayName } from '@/lib/avatars'
+
+export interface WallOfShameEntry {
+  rank: number
+  manager: string
+  value: number | string
+  description: string
+  season?: string
+  avatarUrl?: string
+}
 
 export class WallOfShameAnalytics {
-  // 1. Eternal Loser - Most total losses across all seasons
-  async getEternalLoser(): Promise<WallOfShameEntry[]> {
-    const teams = await prisma.team.groupBy({
-      by: ['teamKey', 'name', 'managerNickname'],
-      _sum: {
-        losses: true,
-      },
-      orderBy: {
-        _sum: {
-          losses: 'desc',
-        },
-      },
-      take: 10,
-    })
+  private matchupStatsParser = new MatchupStatsParser()
 
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: team._sum.losses || 0,
-      description: `${team._sum.losses} total losses`,
-    }))
+  /**
+   * Helper method to deduplicate entries by manager and return top 3
+   */
+  private deduplicateAndLimit(entries: WallOfShameEntry[]): WallOfShameEntry[] {
+    return entries
+      .filter((entry, index, array) => {
+        // Remove duplicates - only keep the first occurrence of each manager
+        return array.findIndex(e => e.manager === entry.manager) === index
+      })
+      .slice(0, 3) // Take only top 3 after deduplication
   }
 
-  // 2. Last Place Larry - Most last-place finishes
-  async getLastPlaceLarry(): Promise<WallOfShameEntry[]> {
-    const lastPlaceTeams = await prisma.team.findMany({
-      where: {
-        rank: {
-          not: null,
-        },
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        rank: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-            numTeams: true,
-          },
-        },
-      },
-    })
+  // ============================================================================
+  // ALL-TIME DISAPPOINTMENTS
+  // ============================================================================
 
-    // Filter for actual last place (rank equals numTeams)
-    const actualLastPlace = lastPlaceTeams.filter((team: any) =>
-      team.rank === team.league.numTeams
-    )
+  /**
+   * Eternal Last - Average of all season lowest rankings
+   */
+  async getEternalLast(teams?: any[]): Promise<WallOfShameEntry[]> {
+    const teamData = teams || await SharedTeamData.getAllTeams()
+    
+    // Detect current season and filter it out
+    const seasons = [...new Set(teamData.map(t => t.season))].sort()
+    const currentSeason = seasons[seasons.length - 1]
+    const filteredTeams = teamData.filter(t => t.season !== currentSeason)
 
-    // Group by team and count last place finishes
-    const lastPlaceCounts = actualLastPlace.reduce((acc: any, team: any) => {
-      const key = team.teamKey
-      if (!acc[key]) {
-        acc[key] = {
-          teamKey: team.teamKey,
-          teamName: team.name,
-          managerNickname: team.managerNickname || undefined,
-          value: 0,
-        }
+    // Calculate average lowest ranking per manager
+    const managerStats = new Map<string, { totalRank: number; seasons: number }>()
+    
+    for (const team of filteredTeams) {
+      const manager = team.managerNickname || 'Unknown'
+      if (!managerStats.has(manager)) {
+        managerStats.set(manager, { totalRank: 0, seasons: 0 })
       }
-      acc[key].value++
-      return acc
-    }, {} as Record<string, WallOfShameEntry>)
+      const stats = managerStats.get(manager)!
+      stats.totalRank += team.rank || 0
+      stats.seasons += 1
+    }
 
-    return Object.values(lastPlaceCounts)
-      .sort((a: any, b: any) => b.value - a.value)
-      .slice(0, 10)
-      .map((entry: any) => ({
-        ...entry,
-        description: `${entry.value} last place finish${entry.value > 1 ? 'es' : ''}`,
+    return this.deduplicateAndLimit(Array.from(managerStats.entries())
+      .map(([manager, stats]) => ({
+        manager,
+        averageRank: stats.totalRank / stats.seasons,
+        seasons: stats.seasons
       }))
+      .sort((a, b) => b.averageRank - a.averageRank) // Higher average rank = worse
+      .slice(0, 10)
+      .map(({ manager, averageRank, seasons }, index) => ({
+        rank: index + 1,
+        manager: getManagerDisplayName(manager),
+        value: Math.round(averageRank),
+        description: `Average rank: ${Math.round(averageRank)}\nover ${seasons} season${seasons > 1 ? 's' : ''}`,
+        avatarUrl: getManagerAvatarUrl(manager),
+      })))
   }
 
-  // 3. The Unlucky One - Most playoff misses (barely missed cutoff)
-  async getTheUnluckyOne(): Promise<WallOfShameEntry[]> {
-    // Find teams that finished just outside playoff cutoff
-    const teams = await prisma.team.findMany({
-      where: {
-        clinchedPlayoffs: false,
-        rank: {
-          not: null,
-        },
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        rank: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-            numTeams: true,
-          },
-        },
-      },
-    })
+  /**
+   * Close but No Cigar - Most 2nd/3rd place finishes with no championships
+   */
+  async getCloseButNoCigar(teams?: any[]): Promise<WallOfShameEntry[]> {
+    const teamData = teams || await SharedTeamData.getAllTeams()
+    
+    // Detect current season and filter it out
+    const seasons = [...new Set(teamData.map(t => t.season))].sort()
+    const currentSeason = seasons[seasons.length - 1]
+    const filteredTeams = teamData.filter(t => t.season !== currentSeason)
 
-    // Assume top 4 teams make playoffs (adjust based on your league settings)
-    const playoffCutoff = 4
-    const barelyMissed = teams.filter((team: any) => 
-      team.rank && team.rank > playoffCutoff && team.rank <= playoffCutoff + 2
-    )
-
-    // Group by team and count near misses
-    const nearMissCounts = barelyMissed.reduce((acc: any, team: any) => {
-      const key = team.teamKey
-      if (!acc[key]) {
-        acc[key] = {
-          teamKey: team.teamKey,
-          teamName: team.name,
-          managerNickname: team.managerNickname || undefined,
-          value: 0,
-        }
+    // Track near-misses per manager
+    const nearMisses = new Map<string, { secondPlaces: number; thirdPlaces: number; seasons: number }>()
+    
+    for (const team of filteredTeams) {
+      const manager = team.managerNickname || 'Unknown'
+      if (!nearMisses.has(manager)) {
+        nearMisses.set(manager, { secondPlaces: 0, thirdPlaces: 0, seasons: 0 })
       }
-      acc[key].value++
-      return acc
-    }, {} as Record<string, WallOfShameEntry>)
-
-    return Object.values(nearMissCounts)
-      .sort((a: any, b: any) => b.value - a.value)
-      .slice(0, 10)
-      .map((entry: any) => ({
-        ...entry,
-        description: `${entry.value} playoff near miss${entry.value > 1 ? 'es' : ''}`,
-      }))
-  }
-
-  // 4. Worst Record - Lowest single-season win percentage
-  async getWorstRecord(): Promise<WallOfShameEntry[]> {
-    const teams = await prisma.team.findMany({
-      where: {
-        percentage: {
-          not: undefined,
-        },
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        wins: true,
-        losses: true,
-        ties: true,
-        percentage: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        percentage: 'asc',
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: Math.round((team.percentage || 0) * 100) / 100,
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${team.wins}-${team.losses}-${team.ties} (${Math.round((team.percentage || 0) * 100)}%)`,
-    }))
-  }
-
-  // 5. Point Desert - Fewest fantasy points in a season
-  async getPointDesert(): Promise<WallOfShameEntry[]> {
-    const teams = await prisma.team.findMany({
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        pointsFor: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        pointsFor: 'asc',
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: Math.round(team.pointsFor),
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${Math.round(team.pointsFor)} fantasy points`,
-    }))
-  }
-
-  // 6. Rock Bottom - Lowest single-week fantasy score
-  async getRockBottom(): Promise<WallOfShameEntry[]> {
-    const weeklyStats = await prisma.weeklyStat.findMany({
-      select: {
-        teamKey: true,
-        week: true,
-        season: true,
-        points: true,
-        team: {
-          select: {
-            name: true,
-            managerNickname: true,
-            league: {
-              select: {
-                name: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: {
-        points: 'asc',
-      },
-      take: 10,
-    })
-
-    return weeklyStats.map((stat: any) => ({
-      teamKey: stat.teamKey,
-      teamName: stat.team.name,
-      managerNickname: stat.team.managerNickname || undefined,
-      value: Math.round(stat.points),
-      season: stat.season,
-      leagueName: stat.team.league.name,
-      description: `${Math.round(stat.points)} points in Week ${stat.week}`,
-    }))
-  }
-
-  // 7. Playoff Choke - Best regular season, worst playoff result
-  async getPlayoffChoke(): Promise<WallOfShameEntry[]> {
-    // Find teams with best regular season rank but poor playoff performance
-    const teams = await prisma.team.findMany({
-      where: {
-        rank: {
-          lte: 3, // Top 3 regular season
-        },
-        league: {
-          isFinished: true,
-        },
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        rank: true,
-        pointsFor: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-        matchupsAsTeam1: {
-          where: {
-            isPlayoffs: true,
-          },
-          select: {
-            winnerTeamKey: true,
-            team1Points: true,
-            team2Points: true,
-          },
-        },
-        matchupsAsTeam2: {
-          where: {
-            isPlayoffs: true,
-          },
-          select: {
-            winnerTeamKey: true,
-            team1Points: true,
-            team2Points: true,
-          },
-        },
-      },
-    })
-
-    const chokeScores: WallOfShameEntry[] = []
-
-    teams.forEach((team: any) => {
-      const playoffMatchups = [...team.matchupsAsTeam1, ...team.matchupsAsTeam2]
-      const playoffWins = playoffMatchups.filter((m: any) => m.winnerTeamKey === team.teamKey).length
-      const playoffLosses = playoffMatchups.length - playoffWins
+      const stats = nearMisses.get(manager)!
       
-      if (playoffLosses > playoffWins) {
-        chokeScores.push({
-          teamKey: team.teamKey,
-          teamName: team.name,
-          managerNickname: team.managerNickname || undefined,
-          value: playoffLosses - playoffWins,
-          season: team.league.season,
-          leagueName: team.league.name,
-          description: `${team.rank}rd regular season, ${playoffWins}-${playoffLosses} playoffs`,
+      if (team.rank === 2) {
+        stats.secondPlaces++
+      } else if (team.rank === 3) {
+        stats.thirdPlaces++
+      }
+      stats.seasons++
+    }
+
+    // Filter out managers who have won championships
+    const champions = new Set<string>()
+    for (const team of filteredTeams) {
+      if (team.rank === 1) {
+        champions.add(team.managerNickname || 'Unknown')
+      }
+    }
+
+    return this.deduplicateAndLimit(Array.from(nearMisses.entries())
+      .filter(([manager, _]) => !champions.has(manager)) // Only non-champions
+      .filter(([_, stats]) => stats.secondPlaces > 0 || stats.thirdPlaces > 0) // Must have at least one near-miss
+      .map(([manager, stats]) => ({
+        manager,
+        totalNearMisses: stats.secondPlaces + stats.thirdPlaces,
+        secondPlaces: stats.secondPlaces,
+        thirdPlaces: stats.thirdPlaces,
+        seasons: stats.seasons
+      }))
+      .sort((a, b) => b.totalNearMisses - a.totalNearMisses) // Sort by total near-misses
+      .slice(0, 10)
+      .map(({ manager, totalNearMisses, secondPlaces, thirdPlaces, seasons }, index) => ({
+        rank: index + 1,
+        manager: getManagerDisplayName(manager),
+        value: totalNearMisses,
+        description: (() => {
+          const parts = []
+          if (secondPlaces > 0) {
+            parts.push(`${secondPlaces} second-place${secondPlaces !== 1 ? 's' : ''}`)
+          }
+          if (thirdPlaces > 0) {
+            parts.push(`${thirdPlaces} third-place${thirdPlaces !== 1 ? 's' : ''}`)
+          }
+          return parts.join('\n')
+        })(),
+        avatarUrl: getManagerAvatarUrl(manager),
+      })))
+  }
+
+  /**
+   * Playoff Choker - Most playoff losses without a championship
+   */
+  async getPlayoffChoker(matchups?: any[], teams?: any[]): Promise<WallOfShameEntry[]> {
+    // Get all playoff matchups
+    const allMatchups = matchups || await SharedTeamData.getAllMatchups()
+    const playoffMatchups = allMatchups.filter(m => m.isPlayoffs === true)
+
+    // Get all champions with proper finished logic
+    const allTeams = teams || await SharedTeamData.getAllTeams()
+    
+    // Find the most current season
+    const seasons = [...new Set(allTeams.map(t => t.season))].sort()
+    const currentSeason = seasons[seasons.length - 1]
+    
+    // Filter champions with proper finished logic
+    const champions = allTeams.filter(t => {
+      const isSeasonFinished = t.season !== currentSeason || t.isFinished
+      return t.rank === 1 && isSeasonFinished
+    })
+
+    const championManagers = new Set(champions.map(c => c.managerNickname))
+
+    // Count playoff losses for non-champions
+    const playoffLosses = new Map<string, number>()
+    for (const matchup of playoffMatchups) {
+      if (!matchup.winnerTeamKey) continue
+
+      const loserManager = 
+        matchup.team1.teamKey !== matchup.winnerTeamKey ? matchup.team1.managerNickname :
+        matchup.team2.teamKey !== matchup.winnerTeamKey ? matchup.team2.managerNickname :
+        null
+
+      if (loserManager && !championManagers.has(loserManager)) {
+        playoffLosses.set(loserManager, (playoffLosses.get(loserManager) || 0) + 1)
+      }
+    }
+
+    return Array.from(playoffLosses.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([manager, count], index) => ({
+        rank: index + 1,
+        manager: getManagerDisplayName(manager),
+        value: count,
+        description: `${count} playoff loss${count > 1 ? 'es' : ''}\nnever won`,
+        avatarUrl: getManagerAvatarUrl(manager),
+      }))
+  }
+
+  // ============================================================================
+  // SINGLE-SEASON DISASTERS
+  // ============================================================================
+
+  /**
+   * Rock Bottom - Worst single-season record
+   */
+  async getRockBottom(teams?: any[]): Promise<WallOfShameEntry[]> {
+    const teamData = teams || await SharedTeamData.getAllTeams()
+    
+    // Detect current season and filter it out
+    const seasons = [...new Set(teamData.map(t => t.season))].sort()
+    const currentSeason = seasons[seasons.length - 1]
+    const filteredTeams = teamData.filter(t => t.season !== currentSeason)
+    
+    const sortedTeams = [...filteredTeams]
+      .sort((a, b) => {
+        if (a.wins !== b.wins) return a.wins - b.wins
+        return b.losses - a.losses
+      })
+      .slice(0, 10)
+
+    return this.deduplicateAndLimit(sortedTeams.map((team, index) => ({
+      rank: index + 1,
+      manager: getManagerDisplayName(team.managerNickname),
+      value: `${team.wins}-${team.losses}-${team.ties}`,
+      description: `${team.wins}-${team.losses}-${team.ties} record\n${team.season}`,
+      avatarUrl: getManagerAvatarUrl(team.managerNickname),
+    })))
+  }
+
+  /**
+   * The Collapse - Longest losing streak
+   */
+  async getTheCollapse(matchups?: any[]): Promise<WallOfShameEntry[]> {
+    const allMatchups = matchups || await SharedTeamData.getAllMatchups()
+    
+    const filteredMatchups = allMatchups.filter(m => m.winnerTeamKey !== null)
+
+    // Calculate loss streaks
+    const streaks: Array<{
+      manager: string
+      streak: number
+      startWeek: number
+      endWeek: number
+      season: string
+    }> = []
+
+    const currentStreaks = new Map<string, {
+      count: number
+      startWeek: number
+      season: string
+      manager: string
+    }>()
+
+    for (const matchup of filteredMatchups) {
+      const loserManager = 
+        matchup.team1.teamKey !== matchup.winnerTeamKey ? matchup.team1.managerNickname :
+        matchup.team2.teamKey !== matchup.winnerTeamKey ? matchup.team2.managerNickname :
+        null
+
+      if (!loserManager) continue
+
+      const key = `${loserManager}-${matchup.season}`
+
+      if (!currentStreaks.has(key)) {
+        currentStreaks.set(key, {
+          count: 1,
+          startWeek: matchup.week,
+          season: matchup.season,
+          manager: loserManager,
+        })
+      } else {
+        const streak = currentStreaks.get(key)!
+        streak.count++
+      }
+
+      // Check for streak end
+      const winnerManager = 
+        matchup.team1.teamKey === matchup.winnerTeamKey ? matchup.team1.managerNickname :
+        matchup.team2.managerNickname
+
+      if (winnerManager) {
+        const winnerKey = `${winnerManager}-${matchup.season}`
+        const winnerStreak = currentStreaks.get(winnerKey)
+        if (winnerStreak && winnerStreak.count > 0) {
+          streaks.push({
+            manager: winnerStreak.manager,
+            streak: winnerStreak.count,
+            startWeek: winnerStreak.startWeek,
+            endWeek: matchup.week - 1,
+            season: winnerStreak.season,
+          })
+          currentStreaks.delete(winnerKey)
+        }
+      }
+    }
+
+    // Add remaining streaks
+    for (const [_, streak] of currentStreaks) {
+      streaks.push({
+        manager: streak.manager,
+        streak: streak.count,
+        startWeek: streak.startWeek,
+        endWeek: streak.startWeek + streak.count - 1,
+        season: streak.season,
+      })
+    }
+
+    return this.deduplicateAndLimit(streaks
+      .sort((a, b) => b.streak - a.streak)
+      .slice(0, 10)
+      .map((s, index) => ({
+        rank: index + 1,
+        manager: getManagerDisplayName(s.manager),
+        value: s.streak,
+        description: `${s.streak} game losing streak\n${s.season} (Weeks ${s.startWeek}-${s.endWeek})`,
+        avatarUrl: getManagerAvatarUrl(s.manager),
+      })))
+  }
+
+  /**
+   * Brick Hands - Highest points against in one season
+   */
+  async getBrickHands(teams?: any[]): Promise<WallOfShameEntry[]> {
+    const teamData = teams || await SharedTeamData.getAllTeams()
+    
+    const sortedTeams = [...teamData]
+      .sort((a, b) => b.pointsAgainst - a.pointsAgainst)
+      .slice(0, 10)
+
+    return this.deduplicateAndLimit(sortedTeams.map((team, index) => ({
+      rank: index + 1,
+      manager: getManagerDisplayName(team.managerNickname),
+      value: Math.round(team.pointsAgainst),
+      description: `${Math.round(team.pointsAgainst).toLocaleString()} points against\n${team.season}`,
+      avatarUrl: getManagerAvatarUrl(team.managerNickname),
+    })))
+  }
+
+  /**
+   * The Heartbreak - Most losses by <5 points
+   */
+  async getTheHeartbreak(matchups?: any[]): Promise<WallOfShameEntry[]> {
+    const allMatchups = matchups || await SharedTeamData.getAllMatchups()
+    
+    const matchupsWithPoints = allMatchups.filter(m => 
+      m.team1Points !== null && m.team2Points !== null && m.winnerTeamKey !== null
+    )
+
+    // Count close losses (<5 points) per manager
+    const closeLosses = new Map<string, number>()
+    
+    for (const matchup of matchupsWithPoints) {
+      const margin = Math.abs((matchup.team1Points || 0) - (matchup.team2Points || 0))
+      
+      if (margin < 5) {
+        // Determine loser
+        const loserManager = 
+          matchup.team1.teamKey !== matchup.winnerTeamKey ? matchup.team1.managerNickname :
+          matchup.team2.teamKey !== matchup.winnerTeamKey ? matchup.team2.managerNickname :
+          null
+        
+        if (loserManager) {
+          closeLosses.set(loserManager, (closeLosses.get(loserManager) || 0) + 1)
+        }
+      }
+    }
+
+    return this.deduplicateAndLimit(Array.from(closeLosses.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([manager, count], index) => ({
+        rank: index + 1,
+        manager: getManagerDisplayName(manager),
+        value: count,
+        description: `${count} loss${count > 1 ? 'es' : ''} by <5 points`,
+        avatarUrl: getManagerAvatarUrl(manager),
+      })))
+  }
+
+  /**
+   * Glass Cannon - High points + bad rank (single season)
+   */
+  async getGlassCannon(teams?: any[]): Promise<WallOfShameEntry[]> {
+    const teamData = teams || await SharedTeamData.getAllTeams()
+    
+    // Find teams with high points but bad rank (bottom half)
+    const glassCannonSeasons = teamData
+      .filter(team => {
+        const bottomHalf = team.rank && team.rank > team.league.numTeams / 2
+        return bottomHalf && team.pointsFor > 0
+      })
+      .sort((a, b) => b.pointsFor - a.pointsFor) // Sort by highest points
+      .slice(0, 10)
+
+    return this.deduplicateAndLimit(glassCannonSeasons.map((team, index) => ({
+      rank: index + 1,
+      manager: getManagerDisplayName(team.managerNickname),
+      value: Math.round(team.pointsFor),
+      description: `${Math.round(team.pointsFor).toLocaleString()} points\nfinished #${team.rank}\n${team.season}`,
+      avatarUrl: getManagerAvatarUrl(team.managerNickname),
+    })))
+  }
+
+  /**
+   * The Snooze - Lowest weekly score ever
+   */
+  async getTheSnooze(matchups?: any[]): Promise<WallOfShameEntry[]> {
+    const allMatchups = matchups || await SharedTeamData.getAllMatchups()
+    
+    // Detect current season and filter it out
+    const seasons = [...new Set(allMatchups.map(m => m.season))].sort()
+    const currentSeason = seasons[seasons.length - 1]
+    const filteredMatchups = allMatchups.filter(m => m.season !== currentSeason)
+    
+    const matchupsWithPoints = filteredMatchups.filter(m => m.team1Points !== null || m.team2Points !== null)
+
+    // Collect all weekly scores
+    const scores: Array<{
+      manager: string
+      points: number
+      week: number
+      season: string
+    }> = []
+
+    for (const matchup of matchupsWithPoints) {
+      if (matchup.team1Points !== null) {
+        scores.push({
+          manager: matchup.team1.managerNickname || 'Unknown',
+          points: matchup.team1Points,
+          week: matchup.week,
+          season: matchup.season,
         })
       }
-    })
-
-    return chokeScores
-      .sort((a: any, b: any) => b.value - a.value)
-      .slice(0, 10)
-  }
-
-  // 8. Losing Streak - Most consecutive losing weeks
-  async getLosingStreak(): Promise<WallOfShameEntry[]> {
-    // This would require more complex logic to track consecutive losses
-    // For now, return teams with most total losses in a season
-    const teams = await prisma.team.findMany({
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        losses: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        losses: 'desc',
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: team.losses,
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${team.losses} losses in season`,
-    }))
-  }
-
-  // 9. Waiver Warrior - Most roster moves but still finished last
-  async getWaiverWarrior(): Promise<WallOfShameEntry[]> {
-    const teams = await prisma.team.findMany({
-      where: {
-        numberOfMoves: {
-          gt: 10, // High number of moves
-        },
-        rank: {
-          not: null,
-        },
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        numberOfMoves: true,
-        rank: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-            numTeams: true,
-          },
-        },
-      },
-    })
-
-    // Filter for teams that finished in bottom half despite many moves
-    const inefficientTeams = teams.filter((team: any) =>
-      team.rank && team.rank > (team.league.numTeams / 2)
-    )
-
-    return inefficientTeams
-      .sort((a: any, b: any) => b.numberOfMoves - a.numberOfMoves)
-      .slice(0, 10)
-      .map((team: any) => ({
-        teamKey: team.teamKey,
-        teamName: team.name,
-        managerNickname: team.managerNickname || undefined,
-        value: team.numberOfMoves,
-        season: team.league.season,
-        leagueName: team.league.name,
-        description: `${team.numberOfMoves} moves, finished ${team.rank}rd`,
-      }))
-  }
-
-  // 10. The Overthinker - Most trades but worst record
-  async getTheOverthinker(): Promise<WallOfShameEntry[]> {
-    const teams = await prisma.team.findMany({
-      where: {
-        numberOfTrades: {
-          gt: 5, // High number of trades
-        },
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        numberOfTrades: true,
-        wins: true,
-        losses: true,
-        percentage: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        numberOfTrades: 'desc',
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: team.numberOfTrades,
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${team.numberOfTrades} trades, ${team.wins}-${team.losses} record`,
-    }))
-  }
-
-  // 11. Inactive Owner - Fewest moves, worst record
-  async getInactiveOwner(): Promise<WallOfShameEntry[]> {
-    const teams = await prisma.team.findMany({
-      where: {
-        numberOfMoves: {
-          lt: 5, // Low number of moves
-        },
-        percentage: {
-          lt: 0.3, // Poor win percentage
-        },
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        numberOfMoves: true,
-        wins: true,
-        losses: true,
-        percentage: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: [
-        { numberOfMoves: 'asc' },
-        { percentage: 'asc' },
-      ],
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: team.numberOfMoves,
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${team.numberOfMoves} moves, ${Math.round((team.percentage || 0) * 100)}% win rate`,
-    }))
-  }
-
-  // 12. Goalie Graveyard - Worst goalie stats
-  async getGoalieGraveyard(): Promise<WallOfShameEntry[]> {
-    // This would require goalie-specific stats from WeeklyStat
-    // For now, return teams with most losses (assuming goalie impact)
-    const teams = await prisma.team.findMany({
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        losses: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        losses: 'desc',
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: team.losses,
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${team.losses} losses (goalie struggles)`,
-    }))
-  }
-
-  // 13. Can't Buy a Goal - Lowest goals scored in season
-  async getCantBuyAGoal(): Promise<WallOfShameEntry[]> {
-    // This would require parsing WeeklyStat.stats for goals
-    // For now, return teams with lowest points (proxy for goals)
-    const teams = await prisma.team.findMany({
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        pointsFor: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        pointsFor: 'asc',
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: Math.round(team.pointsFor),
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${Math.round(team.pointsFor)} fantasy points (low scoring)`,
-    }))
-  }
-
-  // 14. Penalty Box - Most PIMs with losing record
-  async getPenaltyBox(): Promise<WallOfShameEntry[]> {
-    // This would require parsing WeeklyStat.stats for penalty minutes
-    // For now, return teams with poor records
-    const teams = await prisma.team.findMany({
-      where: {
-        percentage: {
-          lt: 0.4,
-        },
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        wins: true,
-        losses: true,
-        percentage: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        percentage: 'asc',
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: Math.round((team.percentage || 0) * 100),
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${team.wins}-${team.losses} record (penalty trouble)`,
-    }))
-  }
-
-  // 15. The Minus - Worst plus/minus rating
-  async getTheMinus(): Promise<WallOfShameEntry[]> {
-    // This would require parsing WeeklyStat.stats for plus/minus
-    // For now, return teams with worst records as proxy
-    const teams = await prisma.team.findMany({
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        pointsAgainst: true,
-        pointsFor: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        pointsAgainst: 'desc',
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.teamKey,
-      teamName: team.name,
-      managerNickname: team.managerNickname || undefined,
-      value: Math.round(team.pointsAgainst - team.pointsFor),
-      season: team.league.season,
-      leagueName: team.league.name,
-      description: `${Math.round(team.pointsAgainst - team.pointsFor)} point differential`,
-    }))
-  }
-
-  // 16. Blowout Victim - Biggest single-week loss margin
-  async getBlowoutVictim(): Promise<WallOfShameEntry[]> {
-    const matchups = await prisma.matchup.findMany({
-      where: {
-        winnerTeamKey: {
-          not: null,
-        },
-        team1Points: {
-          not: null,
-        },
-        team2Points: {
-          not: null,
-        },
-      },
-      select: {
-        team1Key: true,
-        team2Key: true,
-        winnerTeamKey: true,
-        team1Points: true,
-        team2Points: true,
-        week: true,
-        team1: {
-          select: {
-            name: true,
-            managerNickname: true,
-          },
-        },
-        team2: {
-          select: {
-            name: true,
-            managerNickname: true,
-          },
-        },
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-      orderBy: {
-        team1Points: 'desc',
-      },
-      take: 10,
-    })
-
-    return matchups.map((matchup: any) => {
-      const loser = matchup.winnerTeamKey === matchup.team1Key 
-        ? matchup.team2 
-        : matchup.team1
-      
-      const pointDiff = Math.abs((matchup.team1Points || 0) - (matchup.team2Points || 0))
-      
-      return {
-        teamKey: matchup.winnerTeamKey === matchup.team1Key ? matchup.team2Key : matchup.team1Key,
-        teamName: loser.name,
-        managerNickname: loser.managerNickname || undefined,
-        value: Math.round(pointDiff * 100) / 100,
-        season: matchup.league.season,
-        leagueName: matchup.league.name,
-        description: `Lost by ${Math.round(pointDiff * 100) / 100} points in Week ${matchup.week}`,
+      if (matchup.team2Points !== null) {
+        scores.push({
+          manager: matchup.team2.managerNickname || 'Unknown',
+          points: matchup.team2Points,
+          week: matchup.week,
+          season: matchup.season,
+        })
       }
-    })
-  }
-
-  // 17. Never Stood a Chance - Lost most categories in one matchup
-  async getNeverStoodAChance(): Promise<WallOfShameEntry[]> {
-    // This would require parsing statWinners JSON
-    // For now, return teams with biggest losses
-    return this.getBlowoutVictim()
-  }
-
-  // 18. The Heartbreaker - Most close losses (within 5 points)
-  async getTheHeartbreaker(): Promise<WallOfShameEntry[]> {
-    const matchups = await prisma.matchup.findMany({
-      where: {
-        winnerTeamKey: {
-          not: null,
-        },
-        team1Points: {
-          not: null,
-        },
-        team2Points: {
-          not: null,
-        },
-      },
-      select: {
-        team1Key: true,
-        team2Key: true,
-        winnerTeamKey: true,
-        team1Points: true,
-        team2Points: true,
-        team1: {
-          select: {
-            name: true,
-            managerNickname: true,
-          },
-        },
-        team2: {
-          select: {
-            name: true,
-            managerNickname: true,
-          },
-        },
-        league: {
-          select: {
-            name: true,
-            season: true,
-          },
-        },
-      },
-    })
-
-    // Filter for close losses (within 5 points) and group by losing team
-    const closeLossCounts = matchups
-      .filter((matchup: any) => {
-        const pointDiff = Math.abs((matchup.team1Points || 0) - (matchup.team2Points || 0))
-        return pointDiff >= 1 && pointDiff <= 5
-      })
-      .reduce((acc: any, matchup: any) => {
-        const loser = matchup.winnerTeamKey === matchup.team1Key 
-          ? matchup.team2 
-          : matchup.team1
-        const loserKey = matchup.winnerTeamKey === matchup.team1Key 
-          ? matchup.team2Key 
-          : matchup.team1Key
-        const pointDiff = Math.abs((matchup.team1Points || 0) - (matchup.team2Points || 0))
-
-        if (!acc[loserKey]) {
-          acc[loserKey] = {
-            teamKey: loserKey,
-            teamName: loser.name,
-            managerNickname: loser.managerNickname || undefined,
-            value: 0,
-          }
-        }
-        acc[loserKey].value++
-        return acc
-      }, {} as Record<string, WallOfShameEntry>)
-
-    return Object.values(closeLossCounts)
-      .sort((a: any, b: any) => b.value - a.value)
-      .slice(0, 10)
-      .map((entry: any) => ({
-        ...entry,
-        description: `${entry.value} close loss${entry.value > 1 ? 'es' : ''}`,
-      }))
-  }
-
-  // 19. Commissioner Fails - Commissioner's record vs league average
-  async getCommissionerFails(): Promise<WallOfShameEntry[]> {
-    const commissioners = await prisma.team.findMany({
-      where: {
-        managerIsCommissioner: true,
-      },
-      select: {
-        teamKey: true,
-        name: true,
-        managerNickname: true,
-        wins: true,
-        losses: true,
-        percentage: true,
-        league: {
-          select: {
-            name: true,
-            season: true,
-            teams: {
-              select: {
-                percentage: true,
-              },
-            },
-          },
-        },
-      },
-    })
-
-    return commissioners.map((commissioner: any) => {
-      const leagueAvg = commissioner.league.teams.reduce((sum: any, team: any) => 
-        sum + (team.percentage || 0), 0
-      ) / commissioner.league.teams.length
-
-      const performance = (commissioner.percentage || 0) - leagueAvg
-
-      return {
-        teamKey: commissioner.teamKey,
-        teamName: commissioner.name,
-        managerNickname: commissioner.managerNickname || undefined,
-        value: Math.round(performance * 100) / 100,
-        season: commissioner.league.season,
-        leagueName: commissioner.league.name,
-        description: `${Math.round((commissioner.percentage || 0) * 100)}% vs ${Math.round(leagueAvg * 100)}% league avg`,
-      }
-    }).sort((a: any, b: any) => a.value - b.value).slice(0, 10)
-  }
-
-  // 20. Cursed Team Name - Worst performing team names over time
-  async getCursedTeamName(): Promise<WallOfShameEntry[]> {
-    // Group teams by name and calculate average performance
-    const teams = await prisma.team.groupBy({
-      by: ['name'],
-      _avg: {
-        percentage: true,
-      },
-      _count: {
-        leagueId: true,
-      },
-      having: {
-        leagueId: {
-          _count: {
-            gte: 2, // Teams that appear in multiple seasons
-          },
-        },
-      },
-      orderBy: {
-        _avg: {
-          percentage: 'asc',
-        },
-      },
-      take: 10,
-    })
-
-    return teams.map((team: any) => ({
-      teamKey: team.name, // Using name as key since it's grouped
-      teamName: team.name,
-      managerNickname: undefined,
-      value: Math.round((team._avg.percentage || 0) * 100) / 100,
-      description: `${Math.round((team._avg.percentage || 0) * 100)}% avg over ${team._count.leagueId} seasons`,
-    }))
-  }
-
-  // Get all wall of shame categories
-  async getAllCategories(): Promise<Record<string, WallOfShameEntry[]>> {
-    return {
-      'eternal-loser': await this.getEternalLoser(),
-      'last-place-larry': await this.getLastPlaceLarry(),
-      'the-unlucky-one': await this.getTheUnluckyOne(),
-      'worst-record': await this.getWorstRecord(),
-      'point-desert': await this.getPointDesert(),
-      'rock-bottom': await this.getRockBottom(),
-      'playoff-choke': await this.getPlayoffChoke(),
-      'losing-streak': await this.getLosingStreak(),
-      'waiver-warrior': await this.getWaiverWarrior(),
-      'the-overthinker': await this.getTheOverthinker(),
-      'inactive-owner': await this.getInactiveOwner(),
-      'goalie-graveyard': await this.getGoalieGraveyard(),
-      'cant-buy-a-goal': await this.getCantBuyAGoal(),
-      'penalty-box': await this.getPenaltyBox(),
-      'the-minus': await this.getTheMinus(),
-      'blowout-victim': await this.getBlowoutVictim(),
-      'never-stood-a-chance': await this.getNeverStoodAChance(),
-      'the-heartbreaker': await this.getTheHeartbreaker(),
-      'commissioner-fails': await this.getCommissionerFails(),
-      'cursed-team-name': await this.getCursedTeamName(),
     }
+
+    return this.deduplicateAndLimit(scores
+      .sort((a, b) => a.points - b.points) // Lowest first
+      .slice(0, 10)
+      .map((score, index) => ({
+        rank: index + 1,
+        manager: getManagerDisplayName(score.manager),
+        value: score.points.toFixed(1),
+        description: `${score.points.toFixed(1)} points in Week ${score.week}\n${score.season}`,
+        avatarUrl: getManagerAvatarUrl(score.manager),
+      })))
   }
 }

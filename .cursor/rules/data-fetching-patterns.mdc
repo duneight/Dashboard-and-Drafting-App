@@ -762,6 +762,188 @@ export const DataLoadingState = ({
 };
 ```
 
+## React Query Prefetching Strategies
+
+### Global Prefetch Pattern (Landing Page)
+```tsx
+// ✅ GOOD: Prefetch heavy pages from lightweight landing page
+// app/page.tsx (Landing Page)
+'use client'
+import { useQueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
+
+export default function HomePage() {
+  const queryClient = useQueryClient()
+  
+  // Prefetch ALL heavy pages as soon as user lands
+  useEffect(() => {
+    console.log('🚀 Prefetching all analytics pages...')
+    
+    // All three prefetch in parallel (non-blocking)
+    queryClient.prefetchQuery({
+      queryKey: ['dashboard'],
+      queryFn: async () => {
+        const res = await fetch('/api/dashboard')
+        if (!res.ok) throw new Error('Failed to prefetch')
+        return res.json()
+      }
+    })
+    
+    queryClient.prefetchQuery({
+      queryKey: ['hall-of-fame'],
+      queryFn: async () => {
+        const res = await fetch('/api/stats/hall-of-fame')
+        if (!res.ok) throw new Error('Failed to prefetch')
+        return res.json()
+      }
+    })
+    
+    queryClient.prefetchQuery({
+      queryKey: ['wall-of-shame'],
+      queryFn: async () => {
+        const res = await fetch('/api/stats/wall-of-shame')
+        if (!res.ok) throw new Error('Failed to prefetch')
+        return res.json()
+      }
+    })
+  }, [queryClient])
+  
+  // Landing page renders instantly with minimal data
+  return <LandingPageContent />
+}
+```
+
+### Using Prefetched Data
+```tsx
+// app/dashboard/page.tsx
+'use client'
+import { useQuery } from '@tanstack/react-query'
+
+export default function DashboardPage() {
+  // This will use prefetched data instantly if available!
+  const { data, isLoading } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard')
+      if (!res.ok) throw new Error('Failed to fetch')
+      return res.json()
+    },
+    staleTime: 60 * 60 * 1000, // 1 hour
+    gcTime: 24 * 60 * 60 * 1000, // 24 hours
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false
+  })
+  
+  // isLoading will be false if data was prefetched!
+  // Navigation feels instant
+  
+  return <DashboardContent data={data} />
+}
+```
+
+### Stale-While-Revalidate Pattern
+```tsx
+// ✅ GOOD: Serve stale data immediately, revalidate in background
+import { useQuery } from '@tanstack/react-query'
+
+export function useDashboardData() {
+  return useQuery({
+    queryKey: ['dashboard'],
+    queryFn: async () => {
+      const res = await fetch('/api/dashboard')
+      return res.json()
+    },
+    // Serve cached data for 1 hour before marking stale
+    staleTime: 60 * 60 * 1000,
+    // Keep data in cache for 24 hours
+    gcTime: 24 * 60 * 60 * 1000,
+    // Don't refetch on window focus (data changes daily via cron)
+    refetchOnWindowFocus: false,
+    // Background refetch when data becomes stale
+    refetchOnMount: 'always',
+    // Use cached data while refetching
+    placeholderData: (previousData) => previousData
+  })
+}
+```
+
+### Optimistic Cache TTL Strategy
+```tsx
+// ✅ GOOD: Longer cache times for infrequently changing data
+export function useStaticData() {
+  return useQuery({
+    queryKey: ['static-config'],
+    queryFn: fetchConfig,
+    staleTime: 24 * 60 * 60 * 1000, // 24 hours (data updated daily)
+    gcTime: 7 * 24 * 60 * 60 * 1000, // Keep in cache for 1 week
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchOnMount: false // Don't refetch on component mount
+  })
+}
+
+// ❌ BAD: Too-short cache time for stable data
+export function useStaticDataBad() {
+  return useQuery({
+    queryKey: ['static-config'],
+    queryFn: fetchConfig,
+    staleTime: 5 * 60 * 1000, // 5 minutes - too short for daily updates!
+    // Will cause unnecessary API calls
+  })
+}
+```
+
+### Sequential vs Parallel Query Pattern
+```tsx
+// ❌ BAD: Sequential queries (slow)
+export function useSequentialData() {
+  const { data: users } = useQuery({
+    queryKey: ['users'],
+    queryFn: fetchUsers
+  })
+  
+  // Waits for users to finish before starting!
+  const { data: posts } = useQuery({
+    queryKey: ['posts'],
+    queryFn: fetchPosts,
+    enabled: !!users // This makes it sequential
+  })
+  
+  return { users, posts }
+}
+
+// ✅ GOOD: Parallel queries (fast)
+export function useParallelData() {
+  const { data: users } = useQuery({
+    queryKey: ['users'],
+    queryFn: fetchUsers
+  })
+  
+  const { data: posts } = useQuery({
+    queryKey: ['posts'],
+    queryFn: fetchPosts
+    // Both queries run in parallel!
+  })
+  
+  return { users, posts }
+}
+
+// ✅ BETTER: Use Promise.all in API layer
+export function useCombinedData() {
+  return useQuery({
+    queryKey: ['combined-data'],
+    queryFn: async () => {
+      const [users, posts, comments] = await Promise.all([
+        fetchUsers(),
+        fetchPosts(),
+        fetchComments()
+      ])
+      return { users, posts, comments }
+    }
+  })
+}
+```
+
 ## Best Practices Summary
 
 ### ✅ Do's
@@ -773,6 +955,10 @@ export const DataLoadingState = ({
 - Separate server state from client state
 - Use infinite queries for large datasets
 - Implement proper loading states
+- **Prefetch heavy pages from landing page**
+- **Use longer staleTime for infrequently changing data**
+- **Parallelize independent queries with Promise.all()**
+- **Set refetchOnWindowFocus: false for stable data**
 
 ### ❌ Don'ts
 - Don't mix server and client state
@@ -781,6 +967,9 @@ export const DataLoadingState = ({
 - Don't make API calls without proper caching
 - Don't ignore request deduplication
 - Don't forget to clean up subscriptions and intervals
+- **Don't use sequential queries when parallel is possible**
+- **Don't use short staleTime for data that updates infrequently**
+- **Don't refetch on every window focus for stable data**
 
 ### 🔧 Implementation Checklist
 - [ ] Set up React Query or SWR configuration
@@ -793,6 +982,32 @@ export const DataLoadingState = ({
 - [ ] Set up infinite queries for pagination
 - [ ] Test offline scenarios
 - [ ] Monitor performance and cache efficiency
+- [ ] **Add global prefetch strategy from landing page**
+- [ ] **Configure appropriate staleTime/gcTime for each query**
+- [ ] **Parallelize all independent API calls**
+- [ ] **Disable unnecessary refetch triggers**
+
+## Performance Impact Summary
+
+### Query Parallelization
+- **Before**: Sequential queries take N × query_time
+- **After**: Parallel queries take max(query_times)
+- **Impact**: 5-10x faster for multiple queries
+
+### Prefetching Strategy
+- **Before**: User waits 5-20s after navigation
+- **After**: Navigation feels instant (0ms perceived load)
+- **Impact**: 100x better perceived performance
+
+### Stale-While-Revalidate
+- **Before**: Every load waits for fresh data
+- **After**: Instant load with cached data, silent update
+- **Impact**: Sub-100ms response times
+
+### Optimal Cache TTLs
+- **Before**: 5-minute staleTime causes frequent refetches
+- **After**: 1-24 hour staleTime for daily-updated data
+- **Impact**: 90% reduction in unnecessary API calls
 description:
 globs:
 alwaysApply: false

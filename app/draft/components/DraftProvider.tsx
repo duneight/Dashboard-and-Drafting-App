@@ -28,6 +28,7 @@ export function DraftProvider({ children }: DraftProviderProps) {
   const [history] = useState(() => new DraftHistory())
   const [currentTab, setCurrentTab] = useState<TabType>('draft-board')
   const [isLoading, setIsLoading] = useState(true)
+  const [, forceUpdate] = useState({})
 
   // Load initial state
   useEffect(() => {
@@ -90,12 +91,14 @@ export function DraftProvider({ children }: DraftProviderProps) {
   makePick: useCallback((round: number, teamIndex: number, player: any) => {
     const newState = stateManager.makePick(round, teamIndex, player)
     history.saveSnapshot(newState.picks, newState.selectedPlayers, `Picked ${player.name}`)
-  }, [stateManager, history]),
+    forceUpdate({}) // CRITICAL: Force React to re-render
+  }, [stateManager, history, forceUpdate]),
   
   clearPick: useCallback((round: number, teamIndex: number) => {
     const newState = stateManager.clearPick(round, teamIndex)
     history.saveSnapshot(newState.picks, newState.selectedPlayers, `Cleared pick`)
-  }, [stateManager, history]),
+    forceUpdate({}) // CRITICAL: Force React to re-render
+  }, [stateManager, history, forceUpdate]),
   
     undo: useCallback(() => {
       const snapshot = history.undo()
@@ -108,8 +111,9 @@ export function DraftProvider({ children }: DraftProviderProps) {
           currentPick: tempManager.getCurrentPickNumber(picks),
           draftProgress: tempManager.calculateProgress(picks)
         })
+        forceUpdate({}) // CRITICAL: Force React to re-render
       }
-    }, [stateManager, history]),
+    }, [stateManager, history, forceUpdate]),
     
     redo: useCallback(() => {
       const snapshot = history.redo()
@@ -122,14 +126,16 @@ export function DraftProvider({ children }: DraftProviderProps) {
           currentPick: tempManager.getCurrentPickNumber(picks),
           draftProgress: tempManager.calculateProgress(picks)
         })
+        forceUpdate({}) // CRITICAL: Force React to re-render
       }
-    }, [stateManager, history]),
+    }, [stateManager, history, forceUpdate]),
     
     resetDraft: useCallback(() => {
       const newState = stateManager.resetDraft()
       history.clearHistory()
       history.createInitialSnapshot(newState.picks, newState.selectedPlayers)
-    }, [stateManager, history]),
+      forceUpdate({}) // CRITICAL: Force React to re-render
+    }, [stateManager, history, forceUpdate]),
     
     exportDraft: useCallback(() => {
       const csvData = stateManager.exportToCSV()
