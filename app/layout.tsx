@@ -3,7 +3,6 @@ import { Plus_Jakarta_Sans } from 'next/font/google'
 import './globals.css'
 import { Navbar } from './components/Navbar'
 import { QueryProvider } from './components/QueryProvider'
-import { DevRefreshButton } from './components/DevRefreshButton'
 import { DraftNavbarProvider } from './components/DraftNavbarProvider'
 
 // Configure the font
@@ -33,8 +32,6 @@ export default function RootLayout({
               <main className="flex-1">
                 {children}
               </main>
-              {/* Dev Refresh Button - Top Right */}
-              <DevRefreshButton />
             </div>
           </DraftNavbarProvider>
         </QueryProvider>

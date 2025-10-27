@@ -15,21 +15,21 @@ export function PositionAnalysis() {
   ]
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* Team Position Distribution */}
       <div>
-        <h3 className="text-lg font-semibold text-foreground mb-4">Team Position Distribution</h3>
+        <h3 className="text-base md:text-lg font-semibold text-foreground mb-3 md:mb-4">Team Position Distribution</h3>
         
-        <div className="grid grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 md:gap-4">
           {LEAGUE_SETTINGS.owners.map((owner, teamIndex) => {
             const balance = positionBalances[owner]
             if (!balance || balance.total === 0) return null
 
             return (
-              <div key={teamIndex} className="bg-card rounded-lg border border-border p-4">
-                <h4 className="font-medium text-foreground mb-3 text-center">{owner}</h4>
+              <div key={teamIndex} className="bg-card rounded-lg border border-border p-3 md:p-4">
+                <h4 className="font-medium text-foreground mb-2 md:mb-3 text-center text-sm md:text-base">{owner}</h4>
                 
-                <div className="space-y-2">
+                <div className="space-y-1.5 md:space-y-2">
                   {positions.map((position) => {
                     const count = balance[position.key as keyof typeof balance] as number
                     const progress = Math.min(count, position.required)
@@ -37,17 +37,17 @@ export function PositionAnalysis() {
                     const isOverLimit = count > position.required
 
                     return (
-                      <div key={position.key} className="space-y-1">
-                        <div className="flex justify-between items-center text-xs">
+                      <div key={position.key} className="space-y-0.5 md:space-y-1">
+                        <div className="flex justify-between items-center text-[10px] md:text-xs">
                           <span className="text-muted-foreground">{position.label}</span>
                           <span className={`font-medium ${isOverLimit ? 'text-destructive' : 'text-foreground'}`}>
                             {count}/{position.required}
                           </span>
                         </div>
                         
-                        <div className="w-full bg-muted rounded-full h-2">
+                        <div className="w-full bg-muted rounded-full h-1.5 md:h-2">
                           <div
-                            className={`h-2 rounded-full transition-all duration-300 ${position.color} ${
+                            className={`h-1.5 md:h-2 rounded-full transition-all duration-300 ${position.color} ${
                               isOverLimit ? 'bg-destructive' : ''
                             }`}
                             style={{ width: `${Math.min(percentage, 100)}%` }}

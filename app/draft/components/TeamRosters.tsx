@@ -48,10 +48,10 @@ export function TeamRosters() {
   }
 
   return (
-    <div className="space-y-6">
-      <h3 className="text-lg font-semibold text-foreground">Team Rosters</h3>
+    <div className="space-y-4 md:space-y-6">
+      <h3 className="text-base md:text-lg font-semibold text-foreground">Team Rosters</h3>
       
-      <div className="grid grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 md:gap-4">
         {LEAGUE_SETTINGS.owners.map((owner) => {
           const roster = getTeamRoster(owner)
           
@@ -64,19 +64,19 @@ export function TeamRosters() {
           const goalies = getPositionGroup(roster, 'G')
 
           return (
-            <div key={owner} className="bg-card rounded-lg border border-border p-3">
-              <h4 className="font-semibold text-foreground mb-3 text-center text-sm">{owner}</h4>
+            <div key={owner} className="bg-card rounded-lg border border-border p-2 md:p-3">
+              <h4 className="font-semibold text-foreground mb-2 md:mb-3 text-center text-xs md:text-sm">{owner}</h4>
               
-              <div className="space-y-3">
+              <div className="space-y-2 md:space-y-3">
                 {/* Centers */}
                 {centers.length > 0 && (
                   <div>
-                    <h5 className="text-xs font-medium text-red-500 mb-1">Centers ({centers.length})</h5>
-                    <div className="space-y-1">
+                    <h5 className="text-[10px] md:text-xs font-medium text-red-500 mb-1">Centers ({centers.length})</h5>
+                    <div className="space-y-0.5 md:space-y-1">
                       {centers.map((player) => (
-                        <div key={player.pick} className="flex justify-between items-center text-xs">
+                        <div key={player.pick} className="flex justify-between items-center text-[10px] md:text-xs gap-1">
                           <span className="text-foreground truncate">#{player.playerRank} {player.playerName}</span>
-                          <span className="text-muted-foreground text-xs">{player.playerTeam}</span>
+                          <span className="text-muted-foreground text-[10px] md:text-xs flex-shrink-0">{player.playerTeam}</span>
                         </div>
                       ))}
                     </div>
@@ -86,12 +86,12 @@ export function TeamRosters() {
                 {/* Left Wings */}
                 {leftWings.length > 0 && (
                   <div>
-                    <h5 className="text-xs font-medium text-orange-500 mb-1">Left Wings ({leftWings.length})</h5>
-                    <div className="space-y-1">
+                    <h5 className="text-[10px] md:text-xs font-medium text-orange-500 mb-1">Left Wings ({leftWings.length})</h5>
+                    <div className="space-y-0.5 md:space-y-1">
                       {leftWings.map((player) => (
-                        <div key={player.pick} className="flex justify-between items-center text-xs">
+                        <div key={player.pick} className="flex justify-between items-center text-[10px] md:text-xs gap-1">
                           <span className="text-foreground truncate">#{player.playerRank} {player.playerName}</span>
-                          <span className="text-muted-foreground text-xs">{player.playerTeam}</span>
+                          <span className="text-muted-foreground text-[10px] md:text-xs flex-shrink-0">{player.playerTeam}</span>
                         </div>
                       ))}
                     </div>
@@ -101,12 +101,12 @@ export function TeamRosters() {
                 {/* Right Wings */}
                 {rightWings.length > 0 && (
                   <div>
-                    <h5 className="text-xs font-medium text-yellow-500 mb-1">Right Wings ({rightWings.length})</h5>
-                    <div className="space-y-1">
+                    <h5 className="text-[10px] md:text-xs font-medium text-yellow-500 mb-1">Right Wings ({rightWings.length})</h5>
+                    <div className="space-y-0.5 md:space-y-1">
                       {rightWings.map((player) => (
-                        <div key={player.pick} className="flex justify-between items-center text-xs">
+                        <div key={player.pick} className="flex justify-between items-center text-[10px] md:text-xs gap-1">
                           <span className="text-foreground truncate">#{player.playerRank} {player.playerName}</span>
-                          <span className="text-muted-foreground text-xs">{player.playerTeam}</span>
+                          <span className="text-muted-foreground text-[10px] md:text-xs flex-shrink-0">{player.playerTeam}</span>
                         </div>
                       ))}
                     </div>
@@ -116,12 +116,12 @@ export function TeamRosters() {
                 {/* Defense */}
                 {defensemen.length > 0 && (
                   <div>
-                    <h5 className="text-xs font-medium text-blue-500 mb-1">Defense ({defensemen.length})</h5>
-                    <div className="space-y-1">
+                    <h5 className="text-[10px] md:text-xs font-medium text-blue-500 mb-1">Defense ({defensemen.length})</h5>
+                    <div className="space-y-0.5 md:space-y-1">
                       {defensemen.map((player) => (
-                        <div key={player.pick} className="flex justify-between items-center text-xs">
+                        <div key={player.pick} className="flex justify-between items-center text-[10px] md:text-xs gap-1">
                           <span className="text-foreground truncate">#{player.playerRank} {player.playerName}</span>
-                          <span className="text-muted-foreground text-xs">{player.playerTeam}</span>
+                          <span className="text-muted-foreground text-[10px] md:text-xs flex-shrink-0">{player.playerTeam}</span>
                         </div>
                       ))}
                     </div>
@@ -131,12 +131,12 @@ export function TeamRosters() {
                 {/* Goalies */}
                 {goalies.length > 0 && (
                   <div>
-                    <h5 className="text-xs font-medium text-purple-500 mb-1">Goalies ({goalies.length})</h5>
-                    <div className="space-y-1">
+                    <h5 className="text-[10px] md:text-xs font-medium text-purple-500 mb-1">Goalies ({goalies.length})</h5>
+                    <div className="space-y-0.5 md:space-y-1">
                       {goalies.map((player) => (
-                        <div key={player.pick} className="flex justify-between items-center text-xs">
+                        <div key={player.pick} className="flex justify-between items-center text-[10px] md:text-xs gap-1">
                           <span className="text-foreground truncate">#{player.playerRank} {player.playerName}</span>
-                          <span className="text-muted-foreground text-xs">{player.playerTeam}</span>
+                          <span className="text-muted-foreground text-[10px] md:text-xs flex-shrink-0">{player.playerTeam}</span>
                         </div>
                       ))}
                     </div>

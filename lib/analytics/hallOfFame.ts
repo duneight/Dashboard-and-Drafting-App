@@ -364,7 +364,7 @@ export class HallOfFameAnalytics {
       rank: index + 1,
       manager: getManagerDisplayName(team.managerNickname),
       value: `${team.wins}-${team.losses}-${team.ties}`,
-      description: `${team.wins}-${team.losses}-${team.ties} record\n${Math.round(team.pointsFor)} points\n${team.season}`,
+      description: `${team.wins}-${team.losses}-${team.ties}\n${Math.round(team.pointsFor)} points\n${team.season}`,
       avatarUrl: getManagerAvatarUrl(team.managerNickname),
     })))
   }

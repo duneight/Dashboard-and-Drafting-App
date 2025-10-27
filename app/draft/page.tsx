@@ -68,12 +68,12 @@ function DraftContent() {
   ]
 
   return (
-    <div className="container mx-auto animate-fade-in px-4 py-8">
+    <div className="container mx-auto animate-fade-in px-3 md:px-4 py-4 md:py-8">
       {/* Tab Navigation */}
       <TabNavigation tabs={tabs} activeTab={currentTab} onTabChange={(tabId) => switchTab(tabId as any)} />
 
       {/* Tab Content */}
-      <div className="mt-8">
+      <div className="mt-4 md:mt-8">
         {currentTab === 'draft-board' && <DraftBoard />}
         {currentTab === 'best-available' && <BestAvailable />}
         {currentTab === 'position-analysis' && <PositionAnalysis />}

@@ -215,7 +215,7 @@ export class WallOfShameAnalytics {
       rank: index + 1,
       manager: getManagerDisplayName(team.managerNickname),
       value: `${team.wins}-${team.losses}-${team.ties}`,
-      description: `${team.wins}-${team.losses}-${team.ties} record\n${team.season}`,
+      description: `${team.wins}-${team.losses}-${team.ties}\n${team.season}`,
       avatarUrl: getManagerAvatarUrl(team.managerNickname),
     })))
   }

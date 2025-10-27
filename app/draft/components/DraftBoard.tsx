@@ -40,18 +40,17 @@ export function DraftBoard() {
 
   return (
     <div className="bg-card rounded-lg border border-border overflow-hidden">
-      <div className="overflow-x-auto">
-        <table className="w-full">
+      <div className="overflow-x-auto md:overflow-x-visible touch-pan-x">
+        <table className="w-full md:table-fixed min-w-max md:min-w-0">
           <thead className="bg-muted">
             <tr>
-              <th className="px-4 py-3 text-left text-sm font-medium text-foreground border-r border-border">
+              <th className="sticky left-0 z-10 bg-muted px-2 py-2 md:px-4 md:py-3 text-left text-xs md:text-sm font-medium text-foreground border-r border-border w-16 md:w-20">
                 Round
               </th>
               {LEAGUE_SETTINGS.owners.map((owner, index) => (
                 <th 
                   key={index}
-                  className="px-4 py-3 text-center text-sm font-medium text-foreground border-r border-border last:border-r-0"
-                  style={{ width: '9.4%' }}
+                  className="px-2 py-2 md:px-3 md:py-3 text-center text-xs md:text-sm font-medium text-foreground border-r border-border last:border-r-0 min-w-[120px] md:min-w-0 md:w-[calc((100%-5rem)/10)]"
                 >
                   <TeamHeader teamIndex={index} teamName={owner} />
                 </th>
@@ -63,7 +62,7 @@ export function DraftBoard() {
               const round = roundIndex + 1
               return (
                 <tr key={round} className="border-b border-border last:border-b-0">
-                  <td className="px-4 py-3 text-center text-sm font-medium text-foreground border-r border-border bg-muted">
+                  <td className="sticky left-0 z-10 bg-muted px-2 py-2 md:px-4 md:py-3 text-center text-xs md:text-sm font-medium text-foreground border-r border-border w-16 md:w-20">
                     {round}
                   </td>
                   {LEAGUE_SETTINGS.owners.map((owner, teamIndex) => {
@@ -74,7 +73,7 @@ export function DraftBoard() {
                     return (
                       <td 
                         key={teamIndex}
-                        className={`px-2 py-2 border-r border-border last:border-r-0 ${
+                        className={`px-1 py-2 md:px-2 md:py-2 border-r border-border last:border-r-0 min-w-[120px] md:min-w-0 md:w-[calc((100%-5rem)/10)] ${
                           swapInfo ? 'bg-purple-500/20 border-l-4 border-l-purple-500' : ''
                         }`}
                       >
@@ -84,12 +83,12 @@ export function DraftBoard() {
                           pick={pick}
                         />
                         {swapInfo?.swappedTo && (
-                          <div className="text-xs text-purple-500 mt-1">
+                          <div className="text-[10px] md:text-xs text-purple-500 mt-1">
                             → {swapInfo.swappedTo}
                           </div>
                         )}
                         {swapInfo?.swappedFrom && (
-                          <div className="text-xs text-purple-500 mt-1">
+                          <div className="text-[10px] md:text-xs text-purple-500 mt-1">
                             ← {swapInfo.swappedFrom}
                           </div>
                         )}

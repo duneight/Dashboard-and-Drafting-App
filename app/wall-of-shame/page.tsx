@@ -98,16 +98,16 @@ function Medallion({ name, avatarUrl, rank }: { name: string; avatarUrl?: string
   
   // Background circle sizes - smaller than medal sizes
   const backgroundSizes = rank === 1 
-    ? "size-28 lg:size-48 xl:size-60" 
+    ? "size-20 md:size-28 lg:size-48 xl:size-60" 
     : rank === 2 
-    ? "size-24 lg:size-40 xl:size-50" 
-    : "size-20 lg:size-32 xl:size-40";
+    ? "size-18 md:size-24 lg:size-40 xl:size-50" 
+    : "size-16 md:size-20 lg:size-32 xl:size-40";
   
   const textSizes = rank === 1 
-    ? "text-2xl lg:text-6xl xl:text-8xl" 
+    ? "text-lg md:text-2xl lg:text-6xl xl:text-8xl" 
     : rank === 2 
-    ? "text-xl lg:text-5xl xl:text-7xl" 
-    : "text-lg lg:text-4xl xl:text-6xl";
+    ? "text-base md:text-xl lg:text-5xl xl:text-7xl" 
+    : "text-sm md:text-lg lg:text-4xl xl:text-6xl";
   
   return (
     <div className="relative">
@@ -163,16 +163,16 @@ function PodiumColumn({ entry, position }: { entry: PodiumEntry; position: numbe
   const isCorrectPosition = rank === actualRank;
   
   return (
-    <div className={`flex flex-col items-center ${rank === 1 ? 'p-4 lg:p-6 xl:p-8 mt-20 lg:mt-24 xl:mt-28' : rank === 2 ? 'p-3 lg:p-4 xl:p-6 mt-20 lg:mt-24 xl:mt-28' : 'p-2 lg:p-3 xl:p-4 mt-20 lg:mt-24 xl:mt-28'} rounded-xl hover:bg-foreground/5 transition ${
+    <div className={`flex flex-col items-center ${rank === 1 ? 'p-2 md:p-4 lg:p-6 xl:p-8 mt-8 md:mt-20 lg:mt-24 xl:mt-28' : rank === 2 ? 'p-1.5 md:p-3 lg:p-4 xl:p-6 mt-8 md:mt-20 lg:mt-24 xl:mt-28' : 'p-1 md:p-2 lg:p-3 xl:p-4 mt-8 md:mt-20 lg:mt-24 xl:mt-28'} rounded-xl hover:bg-foreground/5 transition ${
       isGold ? 'order-2' : isSilver ? 'order-1' : 'order-3'
     }`}>
       <div className="relative mb-2 lg:mb-3 xl:mb-4">
         <Medallion name={entry.manager} avatarUrl={entry.avatarUrl} rank={rank} />
       </div>
       <div className="text-center">
-        <div className={`${rank === 1 ? 'h-12 lg:h-20 xl:h-28' : rank === 2 ? 'h-12 lg:h-16 xl:h-20' : 'h-12 lg:h-16 xl:h-20'}`}></div>
-        <p className="text-base lg:text-lg xl:text-2xl text-foreground/70 truncate mb-6 lg:mb-8 xl:mb-10 whitespace-pre-line">
-          {entry.description}{entry.season && ` • ${entry.season}`}
+        <div className={`${rank === 1 ? 'h-12 md:h-12 lg:h-20 xl:h-28' : rank === 2 ? 'h-6 md:h-12 lg:h-16 xl:h-20' : 'h-6 md:h-12 lg:h-16 xl:h-20'}`}></div>
+        <p className="text-xs md:text-sm lg:text-lg xl:text-2xl text-foreground/70 whitespace-pre-line mb-3 md:mb-6 lg:mb-8 xl:mb-10">
+          {entry.description}{entry.season ? ` • ${entry.season}` : ''}
         </p>
       </div>
     </div>
@@ -184,13 +184,13 @@ function PodiumColumn({ entry, position }: { entry: PodiumEntry; position: numbe
 // ----------------------
 function CategoryCard({ category }: { category: Category }) {
   return (
-    <article className="group rounded-2xl border border-foreground/10 bg-gradient-to-b from-background to-foreground/[0.02] p-2 lg:p-3 xl:p-4 shadow-sm hover:shadow-md transition min-h-[400px] lg:min-h-[500px] xl:min-h-[600px] flex flex-col">
+    <article className="group rounded-2xl border border-foreground/10 bg-gradient-to-b from-background to-foreground/[0.02] p-2 lg:p-3 xl:p-4 shadow-sm hover:shadow-md transition min-h-[280px] md:min-h-[400px] lg:min-h-[500px] xl:min-h-[600px] flex flex-col">
       <div className="text-center mb-2 lg:mb-3 xl:mb-4 bg-transparent relative z-10">
-        <h3 className="text-xl lg:text-2xl xl:text-3xl font-semibold leading-tight mb-2">{category.name}</h3>
-        <p className="text-sm lg:text-base xl:text-lg text-foreground/60">{category.description}</p>
+        <h3 className="text-lg md:text-xl lg:text-2xl xl:text-3xl font-semibold leading-tight mb-2">{category.name}</h3>
+        <p className="text-xs md:text-sm lg:text-base xl:text-lg text-foreground/60">{category.description}</p>
       </div>
-      <div className="flex-1 overflow-visible flex items-start justify-center mt-4 lg:mt-6 xl:mt-8">
-        <div className="grid grid-cols-3 gap-4 lg:gap-6 xl:gap-8 w-full">
+      <div className="flex-1 overflow-visible flex items-start justify-center mt-2 md:mt-4 lg:mt-6 xl:mt-8">
+        <div className="grid grid-cols-3 gap-2 md:gap-4 lg:gap-6 xl:gap-8 w-full">
           {category.entries.slice(0, 3).map((e, index) => (
             <PodiumColumn key={`${category.id}-${e.rank}-${e.manager}`} entry={e} position={index} />
           ))}

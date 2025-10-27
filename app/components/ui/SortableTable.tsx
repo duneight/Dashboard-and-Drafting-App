@@ -24,6 +24,8 @@ interface SortableTableProps {
   showSearch?: boolean
   defaultSortColumn?: string
   defaultSortDirection?: SortDirection
+  mobileColumns?: string[] // Array of column keys to show on mobile
+  externalShowAllColumns?: boolean // External control of showAllColumns state
 }
 
 type SortDirection = 'asc' | 'desc' | null
@@ -35,13 +37,19 @@ export function SortableTable({
   searchPlaceholder = 'Search...',
   showSearch = true,
   defaultSortColumn,
-  defaultSortDirection = 'asc'
+  defaultSortDirection = 'asc',
+  mobileColumns,
+  externalShowAllColumns
 }: SortableTableProps) {
   const [sortColumn, setSortColumn] = useState<string | null>(defaultSortColumn || null)
   const [sortDirection, setSortDirection] = useState<SortDirection>(defaultSortColumn ? defaultSortDirection : null)
   const [searchTerm, setSearchTerm] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [showFilters, setShowFilters] = useState(false)
+  const [internalShowAllColumns, setInternalShowAllColumns] = useState(false)
+  
+  // Use external state if provided, otherwise use internal state
+  const showAllColumns = externalShowAllColumns !== undefined ? externalShowAllColumns : internalShowAllColumns
 
   const handleSort = (columnKey: string) => {
     const column = columns.find(col => col.key === columnKey)
@@ -60,6 +68,19 @@ export function SortableTable({
       setSortColumn(columnKey)
       setSortDirection('asc')
     }
+  }
+
+  // Check if a column should be visible on mobile
+  const isMobileColumn = (columnKey: string) => {
+    if (!mobileColumns || mobileColumns.length === 0) return true
+    return mobileColumns.includes(columnKey)
+  }
+
+  // Check if we should show all columns (for "Show More" functionality)
+  const shouldShowColumn = (columnKey: string) => {
+    if (!mobileColumns || mobileColumns.length === 0) return true
+    const isMobile = isMobileColumn(columnKey)
+    return isMobile || showAllColumns
   }
 
   const handleFilterChange = (columnKey: string, value: string) => {
@@ -211,48 +232,85 @@ export function SortableTable({
         </div>
       )}
 
+      {/* Show More/Less Button for Mobile - Internal trigger */}
+      {mobileColumns && mobileColumns.length > 0 && !externalShowAllColumns && (
+        <button 
+          onClick={() => setInternalShowAllColumns(!internalShowAllColumns)}
+          className="show-more-trigger hidden"
+        >
+          {internalShowAllColumns ? 'Show Less' : 'Show More Columns'}
+        </button>
+      )}
+      
+      {/* External button for All Time Leaderboard */}
+      {mobileColumns && mobileColumns.length > 0 && externalShowAllColumns !== undefined && (
+        <div className="md:hidden flex justify-center">
+          <button 
+            onClick={() => {
+              // This is handled by external button
+            }}
+            className="hidden"
+          >
+            {showAllColumns ? 'Show Less' : 'Show More Columns'}
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm lg:text-base table-fixed">
           <thead>
             <tr className="border-b-2 border-border">
-              {columns.map((column) => (
-                <th
-                  key={column.key}
-                  className={`text-left py-3 px-2 lg:py-4 lg:px-6 text-muted-foreground font-semibold text-sm lg:text-base ${
-                    column.sortable ? 'sortable-header cursor-pointer hover:text-foreground' : ''
-                  } ${column.className || ''}`}
-                  onClick={() => column.sortable && handleSort(column.key)}
-                  title={column.tooltip || undefined}
-                  data-tooltip={column.tooltip || undefined}
-                >
-                  <div 
-                    className="flex items-center gap-2"
-                    onMouseEnter={() => column.tooltip && console.log('Tooltip:', column.tooltip)}
+              {columns.map((column) => {
+                const isVisible = shouldShowColumn(column.key)
+                return (
+                  <th
+                    key={column.key}
+                    className={`text-left py-3 px-2 lg:py-4 lg:px-6 text-muted-foreground font-semibold text-sm lg:text-base ${
+                      !isVisible ? 'hidden md:table-cell' : ''
+                    } ${column.sortable ? 'sortable-header cursor-pointer hover:text-foreground' : ''} ${
+                      column.className || ''
+                    }`}
+                    onClick={() => column.sortable && handleSort(column.key)}
+                    title={column.tooltip || undefined}
+                    data-tooltip={column.tooltip || undefined}
                   >
-                    {column.label}
-                    {column.showTooltipIcon && column.tooltip && (
-                      <HelpCircle className="h-4 w-4 text-muted-foreground" />
-                    )}
-                    {column.sortable && getSortIcon(column.key)}
-                  </div>
-                </th>
-              ))}
+                    <div 
+                      className="flex items-center gap-2"
+                      onMouseEnter={() => column.tooltip && console.log('Tooltip:', column.tooltip)}
+                    >
+                      {column.label}
+                      {column.showTooltipIcon && column.tooltip && (
+                        <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      {column.sortable && getSortIcon(column.key)}
+                    </div>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
             {sortedData.map((row, index) => (
               <tr 
                 key={index} 
-                className={`border-b border-border hover:bg-muted/50 transition-colors ${
+                className={`border-b border-border hover:bg-muted/50 transition-colors py-4 md:py-4 ${
                   index % 2 === 0 ? 'bg-card/30' : 'bg-card/10'
                 }`}
               >
-                {columns.map((column) => (
-                  <td key={column.key} className={`py-3 px-2 lg:py-4 lg:px-6 text-sm lg:text-base ${column.className || ''}`}>
-                    {column.render ? column.render(row[column.key], row) : row[column.key]}
-                  </td>
-                ))}
+                {columns.map((column) => {
+                  const isVisible = shouldShowColumn(column.key)
+                  return (
+                    <td 
+                      key={column.key} 
+                      className={`py-3 px-2 lg:py-4 lg:px-6 text-xs sm:text-sm lg:text-base ${
+                        !isVisible ? 'hidden md:table-cell' : ''
+                      } ${column.className || ''}`}
+                    >
+                      {column.render ? column.render(row[column.key], row) : row[column.key]}
+                    </td>
+                  )
+                })}
               </tr>
             ))}
           </tbody>

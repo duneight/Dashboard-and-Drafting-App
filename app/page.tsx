@@ -87,10 +87,12 @@ export default function HomePage() {
           </div>
 
           {/* Title */}
-          <div className="-mt-20">
+          <div className="-mt-20 relative z-10">
             <div className="text-center">
               <h1 className="text-7xl font-extrabold tracking-tight sm:text-8xl md:text-8xl lg:text-8xl mb-2 pb-2">
-                <span className="block text-blue-600 bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent drop-shadow-lg stroke-text" style={{ lineHeight: '1.3' }}>Keeper Tight</span>
+                <span className="block bg-gradient-to-r from-blue-600 to-cyan-500 bg-clip-text text-transparent font-extrabold drop-shadow-lg" style={{ 
+                  lineHeight: '1.3'
+                }}>Keeper Tight</span>
               </h1>
               <p className="text-xl text-white max-w-2xl mx-auto leading-relaxed mb-12 drop-shadow-md">
                 Where Derek's couch is sacred ground since 2015.
