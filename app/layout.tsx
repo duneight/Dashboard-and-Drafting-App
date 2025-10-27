@@ -27,9 +27,9 @@ export default function RootLayout({
       <body className={`${jakarta.variable} font-sans`}>
         <QueryProvider>
           <DraftNavbarProvider>
-            <div className="relative flex min-h-screen flex-col overflow-hidden">
+            <div className="relative flex min-h-screen flex-col">
               <Navbar />
-              <main className="flex-1 overflow-y-auto">
+              <main className="flex-1">
                 {children}
               </main>
             </div>
