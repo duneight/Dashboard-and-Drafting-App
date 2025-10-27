@@ -891,7 +891,7 @@ export default function DashboardPage() {
   return (
     <div className="container mx-auto animate-fade-in px-4 py-8">
       {/* Tab Navigation */}
-      <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
+      <TabNavigation tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} showLabelsOnMobile={true} />
 
       {/* Tab Content */}
       <div className="mt-8">

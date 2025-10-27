@@ -13,9 +13,10 @@ interface TabNavigationProps {
   activeTab: string
   onTabChange: (tabId: string) => void
   className?: string
+  showLabelsOnMobile?: boolean
 }
 
-export function TabNavigation({ tabs, activeTab, onTabChange, className = '' }: TabNavigationProps) {
+export function TabNavigation({ tabs, activeTab, onTabChange, className = '', showLabelsOnMobile = false }: TabNavigationProps) {
   return (
     <div className={`mb-6 md:mb-8 ${className}`}>
       <div className="overflow-x-auto scrollbar-hide">
@@ -31,7 +32,7 @@ export function TabNavigation({ tabs, activeTab, onTabChange, className = '' }: 
               }`}
             >
               {typeof tab.icon === 'string' ? <span className="text-base md:text-lg">{tab.icon}</span> : tab.icon}
-              <span className="hidden sm:inline">{tab.label}</span>
+              <span className={showLabelsOnMobile ? 'inline' : 'hidden sm:inline'}>{tab.label}</span>
             </button>
           ))}
         </div>
