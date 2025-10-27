@@ -83,7 +83,7 @@ export function Navbar() {
         
         {/* Draft Progress - Only show on draft page */}
         {pathname === '/draft' && draftProgress && (
-          <div className="flex items-center gap-4 ml-auto mr-4">
+          <div className="hidden md:flex items-center gap-4 ml-auto mr-4">
             {/* Draft Progress */}
             <div className="text-sm text-muted-foreground">
               Draft Progress: {draftProgress.picks} of {draftProgress.total} picks
