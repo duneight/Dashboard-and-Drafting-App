@@ -255,7 +255,7 @@ export function getTestSeasons(): string[] {
 // Yahoo API Configuration
 export const TEST_LEAGUE_KEY = process.env.YAHOO_TEST_LEAGUE_KEY || '427.l.16794'
 export const SEASONS_TO_SYNC = getSeasonsTotSync() // Dynamic seasons: ['2026', '2025', '2024', ..., '2015']
-export const CACHE_DURATION_HOURS = 24 // How long to cache league data before re-fetching
+export const CACHE_DURATION_HOURS = 168 // How long to cache league data before re-fetching (1 week for weekly cron)
 
 // Yahoo API endpoints
 export const YAHOO_API = {

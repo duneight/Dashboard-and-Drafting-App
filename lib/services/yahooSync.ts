@@ -1173,6 +1173,11 @@ export class YahooSyncService {
   }
 }
 
+// Helper function to get current season (future-proof: 2025, 2026, etc.)
+export function getCurrentSeason(): string {
+  return new Date().getFullYear().toString()
+}
+
 // Singleton instance
 let yahooSyncService: YahooSyncService | null = null
 

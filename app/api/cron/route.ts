@@ -13,15 +13,22 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    logger.info('Starting scheduled Yahoo data sync')
+    // Dynamically determine current season (future-proof: 2025, 2026, etc.)
+    const currentSeason = new Date().getFullYear().toString()
+    logger.info('Starting scheduled Yahoo data sync', { season: currentSeason })
 
     const syncService = await getYahooSyncService()
-    const result = await syncService.syncAllLeagues()
+    const result = await syncService.syncAllLeagues({
+      mode: 'full',
+      season: currentSeason,
+      forceRefresh: false // Let smart caching handle incremental updates
+    })
 
     logger.info('Scheduled Yahoo data sync completed', result)
 
     return NextResponse.json({
       success: true,
+      season: currentSeason,
       timestamp: new Date().toISOString(),
       ...result,
     })
