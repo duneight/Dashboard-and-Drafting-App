@@ -2,10 +2,35 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// ============================================
+// DATABASE CONNECTION CONFIGURATION
+// ============================================
+// Supabase Connection Strategy:
+//
+// url (DATABASE_URL):
+//   - Used by Prisma Client for all application queries
+//   - Should use Transaction Pooler (port 6543) for production/serverless
+//   - Format: postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?pgbouncer=true
+//   - Benefits: Connection pooling, better for serverless/Vercel
+//
+// directUrl (DIRECT_URL):
+//   - REQUIRED when DATABASE_URL uses Transaction Pooler (port 6543)
+//   - Used ONLY by Prisma Migrate for migrations and introspection
+//   - Must use Session Pooler (port 5432) OR Direct Database connection
+//   - Format (Session Pooler): postgresql://postgres.[project-ref]:[password]@aws-0-[region].pooler.supabase.com:5432/postgres?sslmode=require
+//   - Format (Direct Database): postgresql://postgres:[password]@db.[project-ref].supabase.co:5432/postgres
+//   - DO NOT use Transaction Pooler (port 6543) for DIRECT_URL - migrations will fail
+//
+// Why two connections?
+//   - Transaction Pooler (6543) doesn't support prepared statements needed for migrations
+//   - Session Pooler (5432) or Direct Database supports migrations while still providing pooling benefits
+//
+// See: https://supabase.com/docs/guides/database/connecting-to-postgres#connection-pooler
+// See: https://www.prisma.io/docs/guides/deployment/deployment-guides/deploying-to-supabase
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")      // Transaction Pooler (6543) for queries
+  directUrl = env("DIRECT_URL")        // Session Pooler (5432) or Direct Database for migrations
 }
 
 model Game {
@@ -228,4 +253,38 @@ model DraftSnapshot {
   session      DraftSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@map("draft_snapshots")
+}
+
+model RecordSnapshot {
+  id            String   @id @default(cuid())
+  categoryId    String
+  categoryType  String   // 'hall-of-fame' | 'wall-of-shame'
+  manager       String
+  value         String   // Store as string to handle both numbers and strings
+  rank          Int
+  season        String
+  syncTimestamp String   // Unique identifier for each sync run
+  createdAt     DateTime @default(now())
+
+  @@unique([categoryId, season, syncTimestamp])
+  @@index([categoryId, season])
+  @@index([syncTimestamp])
+  @@index([categoryType])
+  @@map("record_snapshots")
+}
+
+model NotificationLog {
+  id          String   @id @default(cuid())
+  type        String   // 'record-change' | 'weekly-summary'
+  message     String   @db.Text
+  sentAt      DateTime @default(now())
+  success     Boolean  @default(true)
+  errorMessage String? @db.Text
+  metadata    Json?    // Store additional context (categoryId, manager, etc.)
+  messageSid  String?  // Twilio message SID for tracking
+
+  @@index([sentAt])
+  @@index([type])
+  @@index([success])
+  @@map("notification_logs")
 }

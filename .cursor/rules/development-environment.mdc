@@ -1,0 +1,268 @@
+# Development Environment
+
+## Operating System & Shell
+- **OS**: Windows 11
+- **Shell**: PowerShell (not bash/cmd)
+- **Path Format**: Windows paths (e.g., `C:\Users\...`)
+- **Line Endings**: Git is configured with `core.autocrlf=true` (CRLF for Windows)
+
+## PowerShell Command Syntax
+
+### Command Chaining
+- Use semicolons (`;`) to chain commands, NOT `&&` (bash syntax)
+  - ✅ Correct: `cd ..; git status`
+  - ❌ Wrong: `cd .. && git status`
+- Use `-and`, `-or` for logical operators, not `&&`, `||`
+- Use backticks (`` ` ``) for line continuation in PowerShell
+
+### Directory Navigation
+- `Get-Location` or `cd` (no args) to show current directory
+- `Set-Location` or `cd` to change directory
+- Paths with spaces must be quoted: `cd "C:\Users\My Name\Documents"`
+- Use forward slashes work too: `cd C:/Users/...` (PowerShell accepts both)
+
+### File & Folder Operations
+- `Get-ChildItem` (or `ls`/`dir` aliases) to list files
+- `Get-ChildItem -Force` to see hidden files/folders (like `.git`)
+- `Test-Path` to check if file/folder exists: `Test-Path .git`
+- `Test-Path -PathType Leaf` for files, `-PathType Container` for folders
+- `New-Item` to create files/folders
+- `Remove-Item` to delete (use `-Recurse` for folders)
+- `Copy-Item` to copy, `Move-Item` to move/rename
+
+### Environment Variables
+- Access with `$env:VARIABLE_NAME` (e.g., `$env:PATH`)
+- Set with `$env:VARIABLE_NAME = "value"` (session only)
+- Use `[Environment]::GetEnvironmentVariable()` for persistent vars
+- Node.js: `$env:NODE_ENV = "development"`
+
+### Output & Piping
+- Commands return objects, not just text
+- Use `|` for piping (same as bash)
+- `Out-String` to convert objects to strings
+- `Select-Object` to filter object properties
+- `Where-Object` (or `?`) to filter: `Get-ChildItem | Where-Object { $_.Name -like "*.js" }`
+
+### Error Handling
+- `$?` contains success status of last command
+- `$LASTEXITCODE` for exit codes
+- `-ErrorAction Stop` to treat errors as exceptions
+- `try/catch` blocks work in PowerShell
+
+## Git Repository Detection
+
+### Important Notes for Windows/PowerShell:
+1. **Hidden `.git` folders**: The `.git` folder is hidden by default on Windows
+   - Use `Get-ChildItem -Force` to see hidden files/folders
+   - The `.git` folder will show with `d--h--` attributes (hidden directory)
+   - `Test-Path .git` may return false even if the folder exists if not using `-Force`
+
+2. **Checking Git Status**:
+   - Always use `git status` first - if it works, the repo is initialized
+   - If `git status` fails, check for hidden `.git` folder with: `Get-ChildItem -Force | Where-Object { $_.Name -eq '.git' }`
+   - Check remote configuration with: `git remote -v` or `git config --list --show-origin`
+
+3. **Git Remote Detection**:
+   - Check `git config --list --show-origin` to see all git config including remotes
+   - Remote URLs are stored in `.git/config` file
+   - If repo exists but remote seems missing, check config file directly
+
+4. **Git Commands (Work the Same)**:
+   - Most git commands work identically: `git add`, `git commit`, `git push`, `git pull`
+   - Git handles Windows paths automatically
+   - Use quotes for commit messages with special chars: `git commit -m "Fix: Update cron schedule"`
+   - Branch names with spaces need quotes: `git checkout "feature/my branch"`
+
+## Common Git Operations
+
+### Staging & Committing
+- `git add .` or `git add <file>` - works the same
+- `git commit -m "message"` - use quotes for multi-word messages
+- `git status` - shows working directory status
+- `git diff` - shows unstaged changes
+- `git diff --staged` - shows staged changes
+
+### Branching
+- `git branch` - list branches
+- `git checkout -b <branch>` or `git switch -c <branch>` - create and switch
+- `git checkout <branch>` or `git switch <branch>` - switch branch
+- Branch names are case-sensitive on Windows
+
+### Remote Operations
+- `git remote -v` - show remotes
+- `git push origin <branch>` - push to remote
+- `git pull origin <branch>` - pull from remote
+- `git fetch` - fetch without merging
+
+## Node.js & npm Commands
+
+### Package Management
+- `npm install` - install dependencies (works the same)
+- `npm run <script>` - run package.json scripts
+- `npm install -g <package>` - global install
+- Use `npx` for one-time commands: `npx prisma migrate dev`
+
+### Common Scripts
+- `npm run dev` - start dev server
+- `npm run build` - build for production
+- `npm run lint` - run linter
+- Scripts defined in `package.json` work identically
+
+### Path Issues with npm
+- Node scripts handle Windows paths automatically
+- If issues occur, check `package.json` scripts for path separators
+- Use forward slashes in scripts when possible (Node handles conversion)
+
+## File Path Handling
+
+### Spaces in Paths
+- Always quote paths with spaces: `cd "C:\Users\My Name\Documents"`
+- Git commands handle spaces automatically when paths are quoted
+- OneDrive paths often have spaces - always quote them
+
+### Path Separators
+- PowerShell accepts both `\` and `/`
+- Node.js accepts both (converts `/` to `\` on Windows)
+- Git uses forward slashes internally (converts automatically)
+
+### Special Characters
+- Escape with backtick (`` ` ``) in PowerShell: `` `$variable``
+- Use single quotes for literal strings: `'$env:PATH'` (no expansion)
+- Use double quotes for string expansion: `"$env:PATH"` (expands variables)
+
+## Common Pitfalls & Solutions
+
+### Issue: Command not found / not recognized
+- **Solution**: Check if command is in PATH: `$env:PATH -split ';'`
+- Use full path or add to PATH: `$env:PATH += ";C:\path\to\exe"`
+
+### Issue: Permission denied
+- **Solution**: Run PowerShell as Administrator if needed
+- Check file permissions: `Get-Acl <file>`
+
+### Issue: Git says "not a git repository"
+- **Solution**: 
+  1. Try `git status` first (fastest check)
+  2. Check for hidden `.git`: `Get-ChildItem -Force | Where-Object { $_.Name -eq '.git' }`
+  3. Verify you're in the right directory: `Get-Location`
+  4. Check parent directories: `cd ..; git status`
+
+### Issue: OneDrive sync conflicts
+- **Solution**: `.git` folder may not sync properly with OneDrive
+- Consider moving repo outside OneDrive or using Git LFS for large files
+- Check OneDrive sync status if git operations seem slow
+
+### Issue: Line ending conflicts
+- **Solution**: Git is configured with `core.autocrlf=true` (handles automatically)
+- If issues persist, check: `git config core.autocrlf`
+
+### Issue: npm scripts fail with path errors
+- **Solution**: Check `package.json` scripts for hardcoded paths
+- Use relative paths or environment variables
+- Ensure Node.js is in PATH: `node --version`
+
+## Best Practices
+
+### Git Operations
+- Always try `git status` first before assuming repo doesn't exist
+- Check for hidden `.git` folder with `-Force` flag if status fails
+- Don't assume repo needs initialization - check thoroughly first
+- Remember that OneDrive can sometimes have sync issues with `.git` folders
+- Use `git config --list --show-origin` to debug configuration issues
+
+### PowerShell Commands
+- Use semicolons (`;`) for command chaining, not `&&`
+- Quote paths with spaces
+- Use `Get-ChildItem -Force` to see hidden files
+- Check `$?` or `$LASTEXITCODE` after commands to verify success
+- Use `-ErrorAction Stop` in scripts for better error handling
+
+### File Operations
+- Always quote paths that might have spaces
+- Use `Test-Path` before file operations
+- Remember hidden files need `-Force` flag
+- Use forward slashes when possible (more portable)
+
+### Debugging
+- Use `Get-Location` to verify current directory
+- Check `$env:PATH` if commands aren't found
+- Use `git config --list` to see all git settings
+- Check file attributes: `Get-Item <file> | Select-Object Attributes`
+
+## Database Connection Setup (Supabase + Prisma)
+
+### Supabase Connection String Types
+
+Supabase provides three connection string types. Understanding when to use each is crucial:
+
+1. **Direct Database** (port 5432, `db.[project-ref].supabase.co`)
+   - Simplest connection, no pooling
+   - Can be used for both DATABASE_URL and DIRECT_URL
+   - Supports all PostgreSQL features including migrations
+
+2. **Transaction Pooler** (port 6543, `aws-0-[region].pooler.supabase.com`)
+   - **MUST include `?pgbouncer=true`**
+   - Use for DATABASE_URL in production/serverless
+   - **Does NOT support Prisma migrations** - requires DIRECT_URL
+   - Better for serverless/Vercel environments
+
+3. **Session Pooler** (port 5432, `aws-0-[region].pooler.supabase.com`)
+   - **Do NOT include `?pgbouncer=true`**
+   - Use for DIRECT_URL when DATABASE_URL uses Transaction Pooler
+   - Supports migrations while providing connection pooling
+
+### Prisma Migration Connection Requirements
+
+**Critical:** When DATABASE_URL uses Transaction Pooler (port 6543), DIRECT_URL is **REQUIRED** for migrations.
+
+**DIRECT_URL must use:**
+- Session Pooler (port 5432) OR
+- Direct Database connection
+
+**DIRECT_URL must NOT use:**
+- Transaction Pooler (port 6543) - migrations will fail
+
+### Common Connection Issues
+
+**Error: "Can't reach database server"**
+- Check hostname format (pooler vs direct)
+- Verify port (6543 for Transaction Pooler, 5432 for Session/Direct)
+- May need Supabase IPv4 add-on for Direct Database
+- Test connection with `npx prisma migrate status`
+
+**Error: "prepared statement already exists"**
+- Caused by using Transaction Pooler (6543) for migrations
+- Solution: Use Session Pooler (5432) or Direct Database for DIRECT_URL
+
+**Migrations fail but queries work**
+- DIRECT_URL not set or incorrectly configured
+- Ensure DIRECT_URL uses Session Pooler (5432) or Direct Database
+- Verify DIRECT_URL format matches documentation
+
+### Testing Connections
+
+```powershell
+# Test DATABASE_URL (Prisma Client)
+npx prisma studio
+
+# Test DIRECT_URL (Migrations)
+npx prisma migrate status
+
+# Test migration creation (uses DIRECT_URL)
+npx prisma migrate dev --name test --create-only
+```
+
+### Configuration Files
+
+- `env.example` - Documents all three connection types with examples
+- `prisma/schema.prisma` - Contains connection configuration and comments
+- `docs/DATABASE_CONNECTIONS.md` - Comprehensive troubleshooting guide
+
+### Best Practices
+
+- Use Transaction Pooler (6543) for DATABASE_URL in production
+- Always set DIRECT_URL when using Transaction Pooler
+- Use Session Pooler (5432) for DIRECT_URL (recommended) or Direct Database
+- Test migrations locally before deploying
+- Keep connection strings in `.env.local` (not committed to git)
+- Reference `docs/DATABASE_CONNECTIONS.md` for detailed troubleshooting
