@@ -281,7 +281,6 @@ model NotificationLog {
   success     Boolean  @default(true)
   errorMessage String? @db.Text
   metadata    Json?    // Store additional context (categoryId, manager, etc.)
-  messageSid  String?  // Twilio message SID for tracking
 
   @@index([sentAt])
   @@index([type])

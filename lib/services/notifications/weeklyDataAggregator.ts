@@ -497,10 +497,10 @@ export class WeeklyDataAggregator {
   }
 
   /**
-   * Aggregate all weekly data for AI summary
+   * Aggregate all weekly data for weekly summaries
    */
   async aggregateWeeklyData(week?: number): Promise<WeeklySummaryData> {
-    logger.info('Aggregating weekly data for AI summary', { week })
+    logger.info('Aggregating weekly data', { week })
 
     const { teams, matchups } = await this.getCachedData()
     const { season, week: currentWeek } = this.getCurrentSeasonAndWeek(teams, matchups)
