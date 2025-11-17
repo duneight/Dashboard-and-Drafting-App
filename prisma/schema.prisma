@@ -254,36 +254,3 @@ model DraftSnapshot {
 
   @@map("draft_snapshots")
 }
-
-model RecordSnapshot {
-  id            String   @id @default(cuid())
-  categoryId    String
-  categoryType  String   // 'hall-of-fame' | 'wall-of-shame'
-  manager       String
-  value         String   // Store as string to handle both numbers and strings
-  rank          Int
-  season        String
-  syncTimestamp String   // Unique identifier for each sync run
-  createdAt     DateTime @default(now())
-
-  @@unique([categoryId, season, syncTimestamp])
-  @@index([categoryId, season])
-  @@index([syncTimestamp])
-  @@index([categoryType])
-  @@map("record_snapshots")
-}
-
-model NotificationLog {
-  id          String   @id @default(cuid())
-  type        String   // 'record-change' | 'weekly-summary'
-  message     String   @db.Text
-  sentAt      DateTime @default(now())
-  success     Boolean  @default(true)
-  errorMessage String? @db.Text
-  metadata    Json?    // Store additional context (categoryId, manager, etc.)
-
-  @@index([sentAt])
-  @@index([type])
-  @@index([success])
-  @@map("notification_logs")
-}

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getYahooSyncService } from '@/lib/services/yahooSync'
-import { NotificationService } from '@/lib/services/notifications/notificationService'
 import { logger } from '@/lib/logger'
 import { env } from '@/lib/env'
 
@@ -27,34 +26,11 @@ export async function GET(request: NextRequest) {
 
     logger.info('Scheduled Yahoo data sync completed', result)
 
-    // Send notifications if enabled (after successful sync)
-    let notificationResult = null
-    if (env.NOTIFICATIONS_ENABLED === 'true') {
-      try {
-        logger.info('Sending notifications after sync')
-        const notificationService = new NotificationService()
-        notificationResult = await notificationService.sendNotifications(result)
-        logger.info('Notification sending completed', notificationResult)
-      } catch (error) {
-        // Don't fail the cron job if notifications fail
-        logger.error('Error sending notifications (non-fatal)', error as Error)
-        notificationResult = {
-          success: false,
-          changesDetected: 0,
-          messagesSent: 0,
-          errors: [error instanceof Error ? error.message : 'Unknown error'],
-        }
-      }
-    } else {
-      logger.info('Notifications disabled, skipping')
-    }
-
     return NextResponse.json({
       success: true,
       season: currentSeason,
       timestamp: new Date().toISOString(),
       ...result,
-      notifications: notificationResult,
     })
 
   } catch (error) {
