@@ -5,48 +5,51 @@ import { Home } from 'lucide-react'
 import { usePathname } from 'next/navigation'
 import { useDraftNavbar } from './DraftNavbarProvider'
 import { useQueryClient } from '@tanstack/react-query'
+import { useCallback, useRef } from 'react'
+
+// Static array outside component to avoid recreation
+const navLinks = [
+  { href: '/dashboard', label: 'Stats' },
+  { href: '/hall-of-fame', label: 'Hall of Fame' },
+  { href: '/wall-of-shame', label: 'Wall of Shame' },
+  { href: '/draft', label: 'Draft Hub' },
+]
 
 export function Navbar() {
   const pathname = usePathname()
   const { draftProgress, onReset } = useDraftNavbar()
   const queryClient = useQueryClient()
-  
-  // Get current season year
-  const currentYear = new Date().getFullYear()
 
-  const navLinks = [
-    { href: '/dashboard', label: 'Stats' },
-    { href: '/hall-of-fame', label: 'Hall of Fame' },
-    { href: '/wall-of-shame', label: 'Wall of Shame' },
-    { href: '/draft', label: 'Draft Hub' },
-  ]
+  // Debounce refs to prevent prefetch spam
+  const prefetchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Prefetch functions for hover-based loading
-  const prefetchHallOfFame = () => {
-    queryClient.prefetchQuery({
-      queryKey: ['hall-of-fame'],
-      queryFn: async () => {
-        const res = await fetch('/api/stats/hall-of-fame')
-        if (!res.ok) throw new Error('Failed to prefetch hall of fame')
-        return res.json()
-      },
-      staleTime: 60 * 60 * 1000,
-      gcTime: 24 * 60 * 60 * 1000,
-    })
-  }
+  // Memoized prefetch with debounce and cache check
+  const prefetchRoute = useCallback((route: 'hall-of-fame' | 'wall-of-shame') => {
+    // Clear any pending prefetch
+    if (prefetchTimeoutRef.current) {
+      clearTimeout(prefetchTimeoutRef.current)
+    }
 
-  const prefetchWallOfShame = () => {
-    queryClient.prefetchQuery({
-      queryKey: ['wall-of-shame'],
-      queryFn: async () => {
-        const res = await fetch('/api/stats/wall-of-shame')
-        if (!res.ok) throw new Error('Failed to prefetch wall of shame')
-        return res.json()
-      },
-      staleTime: 60 * 60 * 1000,
-      gcTime: 24 * 60 * 60 * 1000,
-    })
-  }
+    // Debounce prefetch by 150ms
+    prefetchTimeoutRef.current = setTimeout(() => {
+      const queryKey = [route]
+
+      // Only prefetch if data isn't already cached
+      const cachedData = queryClient.getQueryData(queryKey)
+      if (cachedData) return
+
+      queryClient.prefetchQuery({
+        queryKey,
+        queryFn: async () => {
+          const res = await fetch(`/api/stats/${route}`)
+          if (!res.ok) throw new Error(`Failed to prefetch ${route}`)
+          return res.json()
+        },
+        staleTime: 60 * 60 * 1000,
+        gcTime: 24 * 60 * 60 * 1000,
+      })
+    }, 150)
+  }, [queryClient])
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -65,11 +68,11 @@ export function Navbar() {
                   : 'text-foreground/60'
               }`}
               onMouseEnter={() => {
-                // Prefetch on hover for hall-of-fame and wall-of-shame
+                // Prefetch on hover (debounced, only if not cached)
                 if (link.href === '/hall-of-fame') {
-                  prefetchHallOfFame()
+                  prefetchRoute('hall-of-fame')
                 } else if (link.href === '/wall-of-shame') {
-                  prefetchWallOfShame()
+                  prefetchRoute('wall-of-shame')
                 }
               }}
             >

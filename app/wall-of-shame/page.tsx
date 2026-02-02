@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useMemo } from "react";
 import { useQuery } from '@tanstack/react-query';
 import { Crown, Skull, Search, Info, AlertTriangle, Filter } from "lucide-react";
 
@@ -271,15 +271,10 @@ function Filters({
 // Main Page Component
 // ----------------------
 export default function WallOfShamePage() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const { 
-    data, 
-    isLoading, 
-    error: queryError, 
-    refetch,
-    dataUpdatedAt 
+  const {
+    data,
+    isLoading,
+    error: queryError
   } = useQuery<WallOfShameResponse>({
     queryKey: ['wall-of-shame'],
     queryFn: async () => {
@@ -295,12 +290,6 @@ export default function WallOfShamePage() {
     refetchOnReconnect: false,
     retry: 2
   });
-
-  // Handle loading and error states
-  useEffect(() => {
-    setLoading(isLoading);
-    setError(queryError?.message || null);
-  }, [isLoading, queryError]);
 
   if (isLoading) {
     return (
@@ -319,13 +308,13 @@ export default function WallOfShamePage() {
     );
   }
 
-  if (error || !data) {
+  if (queryError || !data) {
     return (
       <div className="min-h-dvh bg-background text-foreground">
         <div className="mx-auto max-w-6xl px-4 py-8">
           <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-6">
             <p className="font-semibold">Wall of Shame</p>
-            <p className="text-sm mt-1">{error || 'Unknown error'}</p>
+            <p className="text-sm mt-1">{queryError?.message || 'Unknown error'}</p>
           </div>
         </div>
       </div>
@@ -336,28 +325,11 @@ export default function WallOfShamePage() {
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       {/* Content */}
       <section className="flex-1 px-6 py-8 overflow-y-auto">
-        {loading && (
-          <div className="grid grid-cols-1 gap-6">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-40 rounded-2xl border border-foreground/10 bg-foreground/5 animate-pulse" />
-            ))}
-          </div>
-        )}
-
-        {error && (
-          <div className="rounded-2xl border border-destructive/30 bg-destructive/10 p-6">
-            <p className="font-semibold">Wall of Shame</p>
-            <p className="text-sm mt-1">{error}</p>
-          </div>
-        )}
-
-        {!loading && !error && (
-          <div className="grid grid-cols-1 gap-6">
-            {data.categories.map((c) => (
-              <CategoryCard key={c.id} category={c} />
-            ))}
-          </div>
-        )}
+        <div className="grid grid-cols-1 gap-6">
+          {data.categories.map((c) => (
+            <CategoryCard key={c.id} category={c} />
+          ))}
+        </div>
 
         {/* Footer note for partial data */}
         {data.categories.some(c => c.entries.length === 0) && (

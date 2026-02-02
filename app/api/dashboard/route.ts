@@ -5,8 +5,12 @@ import { ManagerStatsAnalytics } from '@/lib/analytics/managerStats'
 import { HeadToHeadAnalytics } from '@/lib/analytics/headToHead'
 import { LeagueTrendsAnalytics } from '@/lib/analytics/leagueTrends'
 import { SharedTeamData } from '@/lib/analytics/sharedData'
+import { withCache } from '@/lib/cache'
 
 const limiter = rateLimit({ maxRequests: 30, windowMs: 60000 })
+
+// Cache TTL for dashboard data (2 minutes)
+const DASHBOARD_CACHE_TTL = 2 * 60 * 1000
 
 // Helper function to calculate streaks
 function calculateStreaks(matchups: any[]) {
@@ -202,10 +206,38 @@ export async function GET(request: NextRequest) {
     const rateLimitResult = await limiter(request)
     if (rateLimitResult) return rateLimitResult
 
-    console.log('Starting dashboard data fetch...')
-    const managerAnalytics = new ManagerStatsAnalytics()
-    const h2hAnalytics = new HeadToHeadAnalytics()
-    const trendsAnalytics = new LeagueTrendsAnalytics()
+    // Check for cache bypass via query param
+    const url = new URL(request.url)
+    const bypassCache = url.searchParams.has('refresh')
+
+    // Use cached response if available (2 minute TTL)
+    const dashboardData = await withCache(
+      'dashboard-response',
+      async () => {
+        console.log('Starting dashboard data fetch (cache miss)...')
+        return fetchDashboardData()
+      },
+      { ttl: bypassCache ? 0 : DASHBOARD_CACHE_TTL }
+    )
+
+    console.log('Dashboard data fetch completed successfully!')
+    return NextResponse.json(dashboardData)
+
+  } catch (error) {
+    console.error('Error in dashboard route:', error)
+
+    return NextResponse.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
+    }, { status: 500 })
+  }
+}
+
+// Extracted dashboard data fetching logic
+async function fetchDashboardData() {
+  const managerAnalytics = new ManagerStatsAnalytics()
+  const h2hAnalytics = new HeadToHeadAnalytics()
+  const trendsAnalytics = new LeagueTrendsAnalytics()
 
     // ==================== CONTROLLED PARALLEL DATA FETCHING ====================
     console.log('Fetching analytics data with controlled parallelization...')
@@ -384,8 +416,7 @@ export async function GET(request: NextRequest) {
       console.log('Current season performance calculated')
 
       // ==================== RETURN ALL DATA ====================
-      console.log('Dashboard data fetch completed successfully!')
-      return NextResponse.json({
+      return {
         // Manager Rankings Tab
         managerRankings: {
           careerStats: managerCareerStats,
@@ -435,14 +466,5 @@ export async function GET(request: NextRequest) {
           },
           currentSeason: recentPerformance
         }
-      })
-
-  } catch (error) {
-    console.error('Error in dashboard route:', error)
-    
-    return NextResponse.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error occurred',
-    }, { status: 500 })
-  }
+      }
 }
