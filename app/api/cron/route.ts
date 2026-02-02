@@ -14,7 +14,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Dynamically determine current season (future-proof: 2025, 2026, etc.)
-    const currentSeason = new Date().getFullYear().toString()
+    // NHL seasons start in October, so Jan-Sept = previous year's season
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() // 0-indexed: 0=Jan, 9=Oct
+    const currentSeason = (month < 9 ? year - 1 : year).toString()
     logger.info('Starting scheduled Yahoo data sync', { season: currentSeason })
 
     const syncService = await getYahooSyncService()
