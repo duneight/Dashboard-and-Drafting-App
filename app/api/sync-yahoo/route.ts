@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getYahooSyncService } from '@/lib/services/yahooSync'
 import { logger } from '@/lib/logger'
 import { rateLimit } from '@/lib/rateLimit'
+import { env } from '@/lib/env'
 import type { ApiResponse, SyncResponse } from '@/types/yahoo'
 import type { SyncOptions } from '@/lib/services/yahooSync'
+
+// A full sync spans many throttled Yahoo requests; without this it hits the
+// platform default timeout mid-run. Clamped to the plan limit (Hobby 60s,
+// Pro up to 300s).
+export const maxDuration = 60
+export const dynamic = 'force-dynamic'
 
 const limiter = rateLimit({ maxRequests: 5, windowMs: 60000 })
 
@@ -12,6 +19,22 @@ export async function POST(request: NextRequest) {
     // Apply rate limiting
     const rateLimitResult = await limiter(request)
     if (rateLimitResult) return rateLimitResult
+
+    // Same gate as /api/cron: fail closed if the secret is unset so a
+    // misconfigured deploy is loud, not silently open to anyone.
+    if (!env.CRON_SECRET) {
+      logger.error('CRON_SECRET is not configured; refusing to run manual sync')
+      return NextResponse.json(
+        { success: false, error: 'CRON_SECRET not configured' } as ApiResponse,
+        { status: 500 }
+      )
+    }
+
+    const authHeader = request.headers.get('authorization')
+    if (authHeader !== `Bearer ${env.CRON_SECRET}`) {
+      logger.error('Unauthorized manual sync request')
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
     // Parse query parameters
     const searchParams = request.nextUrl.searchParams

@@ -1143,9 +1143,9 @@ export class YahooSyncService {
     // Skip for finished seasons with existing data
     if (leagueInfo.is_finished === '1' || leagueInfo.is_finished === 1) {
       const count = await prisma.matchup.count({
-        where: { 
-          leagueId: leagueInfo.league_key,
-          season: leagueInfo.season 
+        where: {
+          league: { leagueKey: leagueInfo.league_key },
+          season: String(leagueInfo.season)
         }
       })
       
