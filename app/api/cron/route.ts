@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getYahooSyncService } from '@/lib/services/yahooSync'
 import { logger } from '@/lib/logger'
 import { env } from '@/lib/env'
+import { getCurrentNhlSeason } from '@/lib/season'
 
 // A full Yahoo sync spans many leagues with throttled requests and can take
 // well over the platform default timeout. Without this the function is killed
@@ -48,11 +49,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // NHL seasons start in October, so Jan–Sept belong to the previous year.
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth() // 0-indexed: 9 = Oct
-    const currentSeason = (month < 9 ? year - 1 : year).toString()
+    const currentSeason = getCurrentNhlSeason()
 
     // Optional lever to re-sync data that smart caching would otherwise skip
     // (e.g. retroactively corrected past seasons). Configure in vercel.json as

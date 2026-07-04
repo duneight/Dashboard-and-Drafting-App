@@ -6,6 +6,7 @@ import { HeadToHeadAnalytics } from '@/lib/analytics/headToHead'
 import { LeagueTrendsAnalytics } from '@/lib/analytics/leagueTrends'
 import { SharedTeamData } from '@/lib/analytics/sharedData'
 import { withCache } from '@/lib/cache'
+import { getCurrentNhlSeason } from '@/lib/season'
 
 const limiter = rateLimit({ maxRequests: 30, windowMs: 60000 })
 
@@ -125,16 +126,14 @@ function getPlayoffSuccessBySeed(teams: any[]) {
   // Filter teams with ranks
   const teamsWithRanks = teams.filter(t => t.rank !== null)
 
-  // Find the most current season
-  const seasons = [...new Set(teamsWithRanks.map(t => t.season))].sort()
-  const currentSeason = seasons[seasons.length - 1]
-
-  // Count championships by seed (only finished seasons)
+  // Count championships by seed (only finished seasons, per Yahoo's
+  // league-level flag — "not the latest season" wrongly excluded the most
+  // recent completed season until the next one was synced)
   const seedSuccess = new Map<number, { appearances: number; championships: number }>()
 
   for (let seed = 1; seed <= 6; seed++) {
     const teamsWithSeed = teamsWithRanks.filter(t => {
-      const isSeasonFinished = t.season !== currentSeason
+      const isSeasonFinished = t.league?.isFinished ?? false
       return t.rank === seed && isSeasonFinished
     })
     const championships = teamsWithSeed.filter(t => t.rank === 1).length
@@ -287,12 +286,10 @@ async function fetchDashboardData() {
       })
       
       const seasonData = Array.from(seasonMap.entries()).map(([season, seasonTeams]) => {
-        // Find the most current season
-        const allSeasonsList = [...new Set(sharedTeamData.map(t => t.season))].sort()
-        const currentSeason = allSeasonsList[allSeasonsList.length - 1]
-        
-        // Determine if this season is finished
-        const isSeasonFinished = season !== currentSeason
+        // Yahoo's league-level flag, synced onto every team's league relation.
+        // ("Not the latest season in the DB" wrongly hid the champion of the
+        // most recent completed season until the following season was synced.)
+        const isSeasonFinished = seasonTeams[0]?.league?.isFinished ?? false
         
         const champion = isSeasonFinished ? seasonTeams.find(t => t.rank === 1) : null
         const runnerUp = isSeasonFinished ? seasonTeams.find(t => t.rank === 2) : null
@@ -411,7 +408,7 @@ async function fetchDashboardData() {
       
       // Get current season stats (L5 records) for mini-widget
       console.log('Calculating current season performance...')
-      const currentSeason = new Date().getFullYear().toString()
+      const currentSeason = getCurrentNhlSeason()
       const recentPerformance = getCurrentSeasonPerformance(currentSeason, sharedMatchupData)
       console.log('Current season performance calculated')
 

@@ -45,6 +45,7 @@ export class SharedTeamData {
     try {
       const data = await prisma.team.findMany({
         select: {
+          name: true,
           managerNickname: true,
           season: true,
           wins: true,
@@ -59,7 +60,8 @@ export class SharedTeamData {
           isFinished: true,
           league: {
             select: {
-              numTeams: true
+              numTeams: true,
+              isFinished: true
             }
           }
         },
