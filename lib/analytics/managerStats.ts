@@ -1,5 +1,6 @@
-import { prisma } from '@/lib/db/prisma'
 import { SharedTeamData } from '@/lib/analytics/sharedData'
+import { latestSeason } from '@/lib/analytics/types'
+import { getCurrentNhlSeason } from '@/lib/season'
 
 export interface ManagerCareerStats {
   managerNickname: string
@@ -44,12 +45,11 @@ export class ManagerStatsAnalytics {
     const teamData = teams || await SharedTeamData.getAllTeams()
 
     // Find the most current season
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
+    const currentSeason = latestSeason(teamData)
 
     // Group by manager and aggregate stats
     const managerMap = new Map<string, ManagerCareerStats>()
-    const currentYear = new Date().getFullYear().toString()
+    const currentNhlSeason = getCurrentNhlSeason()
 
     for (const team of teamData) {
       const manager = team.managerNickname || 'Unknown'
@@ -118,7 +118,7 @@ export class ManagerStatsAnalytics {
       }
 
       // Track current season rank
-      if (team.season === currentYear) {
+      if (team.season === currentNhlSeason) {
         stats.currentSeasonRank = team.rank
       }
     }
@@ -174,9 +174,12 @@ export class ManagerStatsAnalytics {
 
   /**
    * Calculate league competitiveness metrics
+   *
+   * Accepts precomputed career stats to avoid re-running the aggregation
+   * when the caller already has them (e.g. the dashboard route).
    */
-  async getLeagueCompetitivenessStats() {
-    const managerStats = await this.getManagerCareerStats()
+  async getLeagueCompetitivenessStats(careerStats?: ManagerCareerStats[]) {
+    const managerStats = careerStats || await this.getManagerCareerStats()
     
     // Handle empty data case
     if (managerStats.length === 0) {

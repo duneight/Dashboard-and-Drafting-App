@@ -241,17 +241,20 @@ async function fetchDashboardData() {
     // ==================== CONTROLLED PARALLEL DATA FETCHING ====================
     console.log('Fetching analytics data with controlled parallelization...')
     
-    // Fetch shared team data first - SharedTeamData handles its own caching
+    // Fetch shared team data first - SharedTeamData handles its own caching.
+    // The dashboard never parses the stats JSON columns, so use the light
+    // matchup variant (omits team1Stats/team2Stats).
     const [sharedTeamData, sharedMatchupData] = await Promise.all([
       SharedTeamData.getAllTeams(),
-      SharedTeamData.getAllMatchups()
+      SharedTeamData.getAllMatchups('light')
     ])
-      
-      // Group 1: Manager analytics (can run in parallel)
-      const [managerCareerStats, managerWinPctOverTime, competitivenessStats] = await Promise.all([
-        managerAnalytics.getManagerCareerStats(sharedTeamData),
+
+      // Group 1: Manager analytics — compute career stats once, then reuse
+      // them for the competitiveness metrics instead of re-aggregating
+      const managerCareerStats = await managerAnalytics.getManagerCareerStats(sharedTeamData)
+      const [managerWinPctOverTime, competitivenessStats] = await Promise.all([
         managerAnalytics.getManagerWinPercentageOverTime(sharedTeamData),
-        managerAnalytics.getLeagueCompetitivenessStats()
+        managerAnalytics.getLeagueCompetitivenessStats(managerCareerStats)
       ])
       console.log('Manager analytics fetched')
       

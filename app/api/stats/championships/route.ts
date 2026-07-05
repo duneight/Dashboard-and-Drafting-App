@@ -35,6 +35,8 @@ export async function GET(request: NextRequest) {
         uniqueChampions: championManagers.size,
         champions: Array.from(championManagers),
       },
+    }, {
+      headers: { 'Cache-Control': 's-maxage=600, stale-while-revalidate=3600' },
     })
   } catch (error) {
     console.error('Error in championships route:', error)

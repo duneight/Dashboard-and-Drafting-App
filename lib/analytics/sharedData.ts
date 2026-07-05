@@ -6,12 +6,16 @@ interface CacheEntry<T> {
   ttl: number
 }
 
+export type MatchupDataVariant = 'full' | 'light'
+
 export class SharedTeamData {
   private static teamCache: CacheEntry<any[]> | null = null
   private static matchupCache: CacheEntry<any[]> | null = null
+  private static matchupLightCache: CacheEntry<any[]> | null = null
   private static teamDataPromise: Promise<any[]> | null = null
   private static matchupDataPromise: Promise<any[]> | null = null
-  
+  private static matchupLightDataPromise: Promise<any[]> | null = null
+
   // Cache TTL: 30 minutes
   private static readonly CACHE_TTL = 30 * 60 * 1000
   
@@ -92,33 +96,54 @@ export class SharedTeamData {
     }
   }
   
-  static async getAllMatchups(): Promise<any[]> {
+  /**
+   * Get all matchups.
+   *
+   * `variant: 'full'` (default) includes the large team1Stats/team2Stats JSON
+   * columns (needed by Hall of Fame's stat parsing). `variant: 'light'` omits
+   * them for consumers that never parse stats (dashboard, Wall of Shame).
+   * The two variants are cached separately with the same TTL + in-flight
+   * promise pattern.
+   */
+  static async getAllMatchups(variant: MatchupDataVariant = 'full'): Promise<any[]> {
+    const cache = variant === 'light' ? this.matchupLightCache : this.matchupCache
+
     // Check if we have valid cached data
-    if (this.matchupCache && !this.isExpired(this.matchupCache)) {
-      console.log(`📋 SharedTeamData.getAllMatchups() returning cached data (${this.matchupCache.data.length} matchups)`)
-      return this.matchupCache.data
+    if (cache && !this.isExpired(cache)) {
+      console.log(`📋 SharedTeamData.getAllMatchups(${variant}) returning cached data (${cache.data.length} matchups)`)
+      return cache.data
     }
-    
+
     // If there's already a request in progress, wait for it
-    if (this.matchupDataPromise) {
-      console.log('⏳ SharedTeamData.getAllMatchups() waiting for existing request...')
-      return await this.matchupDataPromise
+    const existingPromise = variant === 'light' ? this.matchupLightDataPromise : this.matchupDataPromise
+    if (existingPromise) {
+      console.log(`⏳ SharedTeamData.getAllMatchups(${variant}) waiting for existing request...`)
+      return await existingPromise
     }
-    
+
     // Start a new request and cache the promise
-    console.log('🔄 SharedTeamData.getAllMatchups() starting new fetch...')
-    this.matchupDataPromise = this.fetchMatchupData()
-    
+    console.log(`🔄 SharedTeamData.getAllMatchups(${variant}) starting new fetch...`)
+    const fetchPromise = this.fetchMatchupData(variant)
+    if (variant === 'light') {
+      this.matchupLightDataPromise = fetchPromise
+    } else {
+      this.matchupDataPromise = fetchPromise
+    }
+
     try {
-      const result = await this.matchupDataPromise
+      const result = await fetchPromise
       return result
     } finally {
       // Clear the promise so future requests can start fresh
-      this.matchupDataPromise = null
+      if (variant === 'light') {
+        this.matchupLightDataPromise = null
+      } else {
+        this.matchupDataPromise = null
+      }
     }
   }
-  
-  private static async fetchMatchupData(): Promise<any[]> {
+
+  private static async fetchMatchupData(variant: MatchupDataVariant): Promise<any[]> {
     try {
       const data = await prisma.matchup.findMany({
         select: {
@@ -128,8 +153,9 @@ export class SharedTeamData {
           isPlayoffs: true,
           team1Points: true,
           team2Points: true,
-          team1Stats: true,
-          team2Stats: true,
+          // The stats JSON columns are the biggest payload — only fetch them
+          // for the full variant
+          ...(variant === 'full' ? { team1Stats: true, team2Stats: true } : {}),
           team1: {
             select: {
               teamKey: true,
@@ -145,25 +171,31 @@ export class SharedTeamData {
         },
         orderBy: { season: 'desc' }
       })
-      
+
       // Cache the data
-      this.matchupCache = {
+      const cacheEntry = {
         data,
         timestamp: Date.now(),
         ttl: this.CACHE_TTL
       }
-      
-      console.log(`✅ SharedTeamData.getAllMatchups() fetched and cached ${data.length} matchups`)
+      if (variant === 'light') {
+        this.matchupLightCache = cacheEntry
+      } else {
+        this.matchupCache = cacheEntry
+      }
+
+      console.log(`✅ SharedTeamData.getAllMatchups(${variant}) fetched and cached ${data.length} matchups`)
       return data
     } catch (error) {
       console.error('❌ Error fetching matchup data:', error)
-      
+
       // If we have stale data, return it as fallback
-      if (this.matchupCache) {
+      const staleCache = variant === 'light' ? this.matchupLightCache : this.matchupCache
+      if (staleCache) {
         console.warn('⚠️ Returning stale matchup data due to database error')
-        return this.matchupCache.data
+        return staleCache.data
       }
-      
+
       // If no fallback data, return empty array
       console.warn('⚠️ No cached data available, returning empty array')
       return []
@@ -178,10 +210,12 @@ export class SharedTeamData {
     console.log('🗑️ SharedTeamData.clearCache() clearing all caches')
     this.teamCache = null
     this.matchupCache = null
+    this.matchupLightCache = null
     this.teamDataPromise = null
     this.matchupDataPromise = null
+    this.matchupLightDataPromise = null
   }
-  
+
   static getCacheStats() {
     return {
       teamCache: this.teamCache ? {
@@ -194,9 +228,15 @@ export class SharedTeamData {
         age: Date.now() - this.matchupCache.timestamp,
         expired: this.isExpired(this.matchupCache)
       } : null,
+      matchupLightCache: this.matchupLightCache ? {
+        size: this.matchupLightCache.data.length,
+        age: Date.now() - this.matchupLightCache.timestamp,
+        expired: this.isExpired(this.matchupLightCache)
+      } : null,
       activePromises: {
         team: !!this.teamDataPromise,
-        matchup: !!this.matchupDataPromise
+        matchup: !!this.matchupDataPromise,
+        matchupLight: !!this.matchupLightDataPromise
       }
     }
   }

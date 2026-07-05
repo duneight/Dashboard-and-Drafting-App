@@ -1,31 +1,16 @@
-import { prisma } from '@/lib/db/prisma'
-import { MatchupStatsParser } from '@/lib/services/matchupStatsParser'
 import { SharedTeamData } from './sharedData'
+import {
+  AnalyticsEntry,
+  collectWeeklyScores,
+  computeStreaks,
+  deduplicateAndLimit,
+  latestSeason,
+} from './types'
 import { getManagerAvatarUrl, getManagerDisplayName } from '@/lib/avatars'
 
-export interface WallOfShameEntry {
-  rank: number
-  manager: string
-  value: number | string
-  description: string
-  season?: string
-  avatarUrl?: string
-}
+export type WallOfShameEntry = AnalyticsEntry
 
 export class WallOfShameAnalytics {
-  private matchupStatsParser = new MatchupStatsParser()
-
-  /**
-   * Helper method to deduplicate entries by manager and return top 3
-   */
-  private deduplicateAndLimit(entries: WallOfShameEntry[]): WallOfShameEntry[] {
-    return entries
-      .filter((entry, index, array) => {
-        // Remove duplicates - only keep the first occurrence of each manager
-        return array.findIndex(e => e.manager === entry.manager) === index
-      })
-      .slice(0, 3) // Take only top 3 after deduplication
-  }
 
   // ============================================================================
   // ALL-TIME DISAPPOINTMENTS
@@ -36,15 +21,14 @@ export class WallOfShameAnalytics {
    */
   async getEternalLast(teams?: any[]): Promise<WallOfShameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
-    
+
     // Detect current season and filter it out
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
+    const currentSeason = latestSeason(teamData)
     const filteredTeams = teamData.filter(t => t.season !== currentSeason)
 
     // Calculate average lowest ranking per manager
     const managerStats = new Map<string, { totalRank: number; seasons: number }>()
-    
+
     for (const team of filteredTeams) {
       const manager = team.managerNickname || 'Unknown'
       if (!managerStats.has(manager)) {
@@ -55,7 +39,7 @@ export class WallOfShameAnalytics {
       stats.seasons += 1
     }
 
-    return this.deduplicateAndLimit(Array.from(managerStats.entries())
+    return deduplicateAndLimit(Array.from(managerStats.entries())
       .map(([manager, stats]) => ({
         manager,
         averageRank: stats.totalRank / stats.seasons,
@@ -77,22 +61,21 @@ export class WallOfShameAnalytics {
    */
   async getCloseButNoCigar(teams?: any[]): Promise<WallOfShameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
-    
+
     // Detect current season and filter it out
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
+    const currentSeason = latestSeason(teamData)
     const filteredTeams = teamData.filter(t => t.season !== currentSeason)
 
     // Track near-misses per manager
     const nearMisses = new Map<string, { secondPlaces: number; thirdPlaces: number; seasons: number }>()
-    
+
     for (const team of filteredTeams) {
       const manager = team.managerNickname || 'Unknown'
       if (!nearMisses.has(manager)) {
         nearMisses.set(manager, { secondPlaces: 0, thirdPlaces: 0, seasons: 0 })
       }
       const stats = nearMisses.get(manager)!
-      
+
       if (team.rank === 2) {
         stats.secondPlaces++
       } else if (team.rank === 3) {
@@ -109,7 +92,7 @@ export class WallOfShameAnalytics {
       }
     }
 
-    return this.deduplicateAndLimit(Array.from(nearMisses.entries())
+    return deduplicateAndLimit(Array.from(nearMisses.entries())
       .filter(([manager, _]) => !champions.has(manager)) // Only non-champions
       .filter(([_, stats]) => stats.secondPlaces > 0 || stats.thirdPlaces > 0) // Must have at least one near-miss
       .map(([manager, stats]) => ({
@@ -121,7 +104,7 @@ export class WallOfShameAnalytics {
       }))
       .sort((a, b) => b.totalNearMisses - a.totalNearMisses) // Sort by total near-misses
       .slice(0, 10)
-      .map(({ manager, totalNearMisses, secondPlaces, thirdPlaces, seasons }, index) => ({
+      .map(({ manager, totalNearMisses, secondPlaces, thirdPlaces }, index) => ({
         rank: index + 1,
         manager: getManagerDisplayName(manager),
         value: totalNearMisses,
@@ -149,11 +132,10 @@ export class WallOfShameAnalytics {
 
     // Get all champions with proper finished logic
     const allTeams = teams || await SharedTeamData.getAllTeams()
-    
+
     // Find the most current season
-    const seasons = [...new Set(allTeams.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
-    
+    const currentSeason = latestSeason(allTeams)
+
     // Filter champions with proper finished logic
     const champions = allTeams.filter(t => {
       const isSeasonFinished = t.season !== currentSeason || t.isFinished
@@ -167,7 +149,7 @@ export class WallOfShameAnalytics {
     for (const matchup of playoffMatchups) {
       if (!matchup.winnerTeamKey) continue
 
-      const loserManager = 
+      const loserManager =
         matchup.team1.teamKey !== matchup.winnerTeamKey ? matchup.team1.managerNickname :
         matchup.team2.teamKey !== matchup.winnerTeamKey ? matchup.team2.managerNickname :
         null
@@ -198,12 +180,11 @@ export class WallOfShameAnalytics {
    */
   async getRockBottom(teams?: any[]): Promise<WallOfShameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
-    
+
     // Detect current season and filter it out
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
+    const currentSeason = latestSeason(teamData)
     const filteredTeams = teamData.filter(t => t.season !== currentSeason)
-    
+
     const sortedTeams = [...filteredTeams]
       .sort((a, b) => {
         if (a.wins !== b.wins) return a.wins - b.wins
@@ -211,7 +192,7 @@ export class WallOfShameAnalytics {
       })
       .slice(0, 10)
 
-    return this.deduplicateAndLimit(sortedTeams.map((team, index) => ({
+    return deduplicateAndLimit(sortedTeams.map((team, index) => ({
       rank: index + 1,
       manager: getManagerDisplayName(team.managerNickname),
       value: `${team.wins}-${team.losses}-${team.ties}`,
@@ -225,80 +206,10 @@ export class WallOfShameAnalytics {
    */
   async getTheCollapse(matchups?: any[]): Promise<WallOfShameEntry[]> {
     const allMatchups = matchups || await SharedTeamData.getAllMatchups()
-    
-    const filteredMatchups = allMatchups.filter(m => m.winnerTeamKey !== null)
 
-    // Calculate loss streaks
-    const streaks: Array<{
-      manager: string
-      streak: number
-      startWeek: number
-      endWeek: number
-      season: string
-    }> = []
+    const streaks = computeStreaks(allMatchups, 'loss')
 
-    const currentStreaks = new Map<string, {
-      count: number
-      startWeek: number
-      season: string
-      manager: string
-    }>()
-
-    for (const matchup of filteredMatchups) {
-      const loserManager = 
-        matchup.team1.teamKey !== matchup.winnerTeamKey ? matchup.team1.managerNickname :
-        matchup.team2.teamKey !== matchup.winnerTeamKey ? matchup.team2.managerNickname :
-        null
-
-      if (!loserManager) continue
-
-      const key = `${loserManager}-${matchup.season}`
-
-      if (!currentStreaks.has(key)) {
-        currentStreaks.set(key, {
-          count: 1,
-          startWeek: matchup.week,
-          season: matchup.season,
-          manager: loserManager,
-        })
-      } else {
-        const streak = currentStreaks.get(key)!
-        streak.count++
-      }
-
-      // Check for streak end
-      const winnerManager = 
-        matchup.team1.teamKey === matchup.winnerTeamKey ? matchup.team1.managerNickname :
-        matchup.team2.managerNickname
-
-      if (winnerManager) {
-        const winnerKey = `${winnerManager}-${matchup.season}`
-        const winnerStreak = currentStreaks.get(winnerKey)
-        if (winnerStreak && winnerStreak.count > 0) {
-          streaks.push({
-            manager: winnerStreak.manager,
-            streak: winnerStreak.count,
-            startWeek: winnerStreak.startWeek,
-            endWeek: matchup.week - 1,
-            season: winnerStreak.season,
-          })
-          currentStreaks.delete(winnerKey)
-        }
-      }
-    }
-
-    // Add remaining streaks
-    for (const [_, streak] of currentStreaks) {
-      streaks.push({
-        manager: streak.manager,
-        streak: streak.count,
-        startWeek: streak.startWeek,
-        endWeek: streak.startWeek + streak.count - 1,
-        season: streak.season,
-      })
-    }
-
-    return this.deduplicateAndLimit(streaks
+    return deduplicateAndLimit(streaks
       .sort((a, b) => b.streak - a.streak)
       .slice(0, 10)
       .map((s, index) => ({
@@ -315,12 +226,12 @@ export class WallOfShameAnalytics {
    */
   async getBrickHands(teams?: any[]): Promise<WallOfShameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
-    
+
     const sortedTeams = [...teamData]
       .sort((a, b) => b.pointsAgainst - a.pointsAgainst)
       .slice(0, 10)
 
-    return this.deduplicateAndLimit(sortedTeams.map((team, index) => ({
+    return deduplicateAndLimit(sortedTeams.map((team, index) => ({
       rank: index + 1,
       manager: getManagerDisplayName(team.managerNickname),
       value: Math.round(team.pointsAgainst),
@@ -334,31 +245,31 @@ export class WallOfShameAnalytics {
    */
   async getTheHeartbreak(matchups?: any[]): Promise<WallOfShameEntry[]> {
     const allMatchups = matchups || await SharedTeamData.getAllMatchups()
-    
-    const matchupsWithPoints = allMatchups.filter(m => 
+
+    const matchupsWithPoints = allMatchups.filter(m =>
       m.team1Points !== null && m.team2Points !== null && m.winnerTeamKey !== null
     )
 
     // Count close losses (<5 points) per manager
     const closeLosses = new Map<string, number>()
-    
+
     for (const matchup of matchupsWithPoints) {
       const margin = Math.abs((matchup.team1Points || 0) - (matchup.team2Points || 0))
-      
+
       if (margin < 5) {
         // Determine loser
-        const loserManager = 
+        const loserManager =
           matchup.team1.teamKey !== matchup.winnerTeamKey ? matchup.team1.managerNickname :
           matchup.team2.teamKey !== matchup.winnerTeamKey ? matchup.team2.managerNickname :
           null
-        
+
         if (loserManager) {
           closeLosses.set(loserManager, (closeLosses.get(loserManager) || 0) + 1)
         }
       }
     }
 
-    return this.deduplicateAndLimit(Array.from(closeLosses.entries())
+    return deduplicateAndLimit(Array.from(closeLosses.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 10)
       .map(([manager, count], index) => ({
@@ -375,7 +286,7 @@ export class WallOfShameAnalytics {
    */
   async getGlassCannon(teams?: any[]): Promise<WallOfShameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
-    
+
     // Find teams with high points but bad rank (bottom half)
     const glassCannonSeasons = teamData
       .filter(team => {
@@ -385,7 +296,7 @@ export class WallOfShameAnalytics {
       .sort((a, b) => b.pointsFor - a.pointsFor) // Sort by highest points
       .slice(0, 10)
 
-    return this.deduplicateAndLimit(glassCannonSeasons.map((team, index) => ({
+    return deduplicateAndLimit(glassCannonSeasons.map((team, index) => ({
       rank: index + 1,
       manager: getManagerDisplayName(team.managerNickname),
       value: Math.round(team.pointsFor),
@@ -399,42 +310,14 @@ export class WallOfShameAnalytics {
    */
   async getTheSnooze(matchups?: any[]): Promise<WallOfShameEntry[]> {
     const allMatchups = matchups || await SharedTeamData.getAllMatchups()
-    
+
     // Detect current season and filter it out
-    const seasons = [...new Set(allMatchups.map(m => m.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
+    const currentSeason = latestSeason(allMatchups)
     const filteredMatchups = allMatchups.filter(m => m.season !== currentSeason)
-    
-    const matchupsWithPoints = filteredMatchups.filter(m => m.team1Points !== null || m.team2Points !== null)
 
-    // Collect all weekly scores
-    const scores: Array<{
-      manager: string
-      points: number
-      week: number
-      season: string
-    }> = []
+    const scores = collectWeeklyScores(filteredMatchups, 'low')
 
-    for (const matchup of matchupsWithPoints) {
-      if (matchup.team1Points !== null) {
-        scores.push({
-          manager: matchup.team1.managerNickname || 'Unknown',
-          points: matchup.team1Points,
-          week: matchup.week,
-          season: matchup.season,
-        })
-      }
-      if (matchup.team2Points !== null) {
-        scores.push({
-          manager: matchup.team2.managerNickname || 'Unknown',
-          points: matchup.team2Points,
-          week: matchup.week,
-          season: matchup.season,
-        })
-      }
-    }
-
-    return this.deduplicateAndLimit(scores
+    return deduplicateAndLimit(scores
       .sort((a, b) => a.points - b.points) // Lowest first
       .slice(0, 10)
       .map((score, index) => ({
