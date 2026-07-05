@@ -2,7 +2,7 @@ import { prisma } from '@/lib/db/prisma'
 import { getYahooClient } from '@/lib/api/yahoo'
 import { logger } from '@/lib/logger'
 import { TEST_LEAGUE_KEY, SEASONS_TO_SYNC, CACHE_DURATION_HOURS } from '@/lib/constants'
-import type { ApiResponse, SyncResponse } from '@/types/yahoo'
+import type { SyncResponse } from '@/types/yahoo'
 
 export interface SyncOptions {
   mode?: 'full' | 'test' | 'single'
@@ -60,7 +60,6 @@ export class YahooSyncService {
         leaguesProcessed: 0,
         teamsProcessed: 0,
         matchupsProcessed: 0,
-        weeklyStatsProcessed: 0,
         errors: ['No leagues found to sync']
       }
     }
@@ -68,7 +67,6 @@ export class YahooSyncService {
     let leaguesProcessed = 0
     let teamsProcessed = 0
     let matchupsProcessed = 0
-    let weeklyStatsProcessed = 0
     const errors: string[] = []
 
     // Process leagues in parallel batches for better performance
@@ -123,8 +121,6 @@ export class YahooSyncService {
             leaguesProcessed += leagueResult.leaguesProcessed
             teamsProcessed += leagueResult.teamsProcessed
             matchupsProcessed += leagueResult.matchupsProcessed
-            weeklyStatsProcessed += leagueResult.weeklyStatsProcessed
-            
             if (leagueResult.errors.length > 0) {
               errors.push(...leagueResult.errors)
             }
@@ -147,7 +143,6 @@ export class YahooSyncService {
       leaguesProcessed,
       teamsProcessed,
       matchupsProcessed,
-      weeklyStatsProcessed,
       errors,
     }
   }
@@ -160,7 +155,6 @@ export class YahooSyncService {
     let leaguesProcessed = 0
     let teamsProcessed = 0
     let matchupsProcessed = 0
-    let weeklyStatsProcessed = 0
     const errors: string[] = []
 
     try {
@@ -174,11 +168,15 @@ export class YahooSyncService {
         if (existingLeague) {
           const lastUpdate = new Date(existingLeague.updatedAt)
           const hoursSinceUpdate = (Date.now() - lastUpdate.getTime()) / (1000 * 60 * 60)
-          
+
+          // A league only counts as syncable-skippable if its data is actually
+          // complete. processLeague refreshes updatedAt before sub-entities are
+          // written, so a run killed mid-league would otherwise look "fresh"
+          // and lock the incomplete league out of re-sync.
+          const hasCompleteData = await this.verifyCompleteData(existingLeague.id, leagueKey)
+
           // Skip finished leagues with complete data
           if (existingLeague.isFinished) {
-            const hasCompleteData = await this.verifyCompleteData(existingLeague.id)
-            
             if (hasCompleteData) {
               logger.info('Skipping finished league - data complete', {
                 leagueKey,
@@ -189,20 +187,19 @@ export class YahooSyncService {
                 leaguesProcessed: 0,
                 teamsProcessed: 0,
                 matchupsProcessed: 0,
-                weeklyStatsProcessed: 0,
                 errors: [`League ${leagueKey} is finished with complete data, skipping`]
               }
             }
           }
           
-          // Skip recently updated leagues (active or finished)
-          if (hoursSinceUpdate < CACHE_DURATION_HOURS) {
+          // Skip recently updated leagues (active or finished) — but only
+          // when their data is complete (see note above)
+          if (hoursSinceUpdate < CACHE_DURATION_HOURS && hasCompleteData) {
             logger.info('League recently updated, skipping', { leagueKey, hoursSinceUpdate: hoursSinceUpdate.toFixed(1) })
             return {
               leaguesProcessed: 0,
               teamsProcessed: 0,
               matchupsProcessed: 0,
-              weeklyStatsProcessed: 0,
               errors: [`League ${leagueKey} was updated ${hoursSinceUpdate.toFixed(1)} hours ago, skipping`]
             }
           }
@@ -224,7 +221,7 @@ export class YahooSyncService {
       if (!leagueData.metadata?.fantasy_content?.league) {
         errors.push(`No metadata found for league ${leagueKey}`)
         console.error('No metadata found', { leagueKey, metadataKeys: Object.keys(leagueData.metadata || {}) })
-        return { leaguesProcessed, teamsProcessed, matchupsProcessed, weeklyStatsProcessed, errors }
+        return { leaguesProcessed, teamsProcessed, matchupsProcessed, errors }
       }
 
       const leagueInfo = leagueData.metadata.fantasy_content.league
@@ -235,28 +232,11 @@ export class YahooSyncService {
         season: leagueInfo.season
       })
 
-      // Smart matchups caching - only fetch if needed
-      const shouldFetchMatchups = await this.shouldFetchMatchups(leagueInfo, forceRefresh)
-      
-      if (shouldFetchMatchups) {
-        logger.info('Fetching matchups data', { leagueKey })
-        leagueData.teams_matchups = await this.yahooClient.fetchTeamsMatchupsOptimized(leagueKey)
-      } else {
-        logger.info('Skipping matchups fetch - using cached data', { leagueKey })
-        leagueData.teams_matchups = null // Will be handled in processing
-      }
-
-      // Extract additional fields that are currently NULL
-      const currentWeek = leagueInfo.current_week ? parseInt(leagueInfo.current_week) : null
-      const startWeek = leagueInfo.start_week ? parseInt(leagueInfo.start_week) : null
-      const endWeek = leagueInfo.end_week ? parseInt(leagueInfo.end_week) : null
-      const startDate = leagueInfo.start_date || null
-      const endDate = leagueInfo.end_date || null
-      const isFinished = leagueInfo.is_finished === '1' || leagueInfo.is_finished === 1
-      
       // Process league
       const league = await this.processLeague(leagueKey, leagueInfo, season, gameCode, leagueData)
       leaguesProcessed++
+
+      const leagueIsFinished = leagueInfo.is_finished === '1' || leagueInfo.is_finished === 1
 
       // Process teams from teams_standings endpoint
       if (leagueData.teams_standings?.fantasy_content?.league?.teams?.team) {
@@ -267,8 +247,14 @@ export class YahooSyncService {
         logger.info('Processing teams', { count: teams.length, leagueKey })
 
         for (const teamData of teams) {
-          await this.processTeam(teamData, league.id, season)
-          teamsProcessed++
+          try {
+            await this.processTeam(teamData, league.id, season, leagueIsFinished)
+            teamsProcessed++
+          } catch (error) {
+            // One malformed team must not abort standings/matchups/draft/
+            // transactions for the whole league
+            errors.push(`Team ${teamData?.team_key} (${leagueKey}): ${error instanceof Error ? error.message : 'Unknown error'}`)
+          }
         }
       } else {
         logger.warn('No teams data found', { 
@@ -311,18 +297,36 @@ export class YahooSyncService {
         })
       }
 
-        // Process matchups with batch operations for better performance
-      if (leagueData.teams_matchups?.fantasy_content?.league?.teams?.team) {
+      // Matchups: fetched here — after league/teams/standings are written —
+      // so a failure on this slow endpoint can't wipe the whole league's sync
+      try {
+        if (await this.shouldFetchMatchups(leagueInfo, forceRefresh)) {
+          logger.info('Fetching matchups data', { leagueKey })
+          leagueData.teams_matchups = await this.yahooClient.fetchTeamsMatchupsOptimized(leagueKey)
+        } else {
+          logger.info('Skipping matchups fetch - complete data already stored', { leagueKey })
+          leagueData.teams_matchups = null
+        }
+
+        if (leagueData.teams_matchups?.fantasy_content?.league?.teams?.team) {
           logger.info('Processing matchups with batch operations', { leagueKey })
           const batchResult = await this.batchProcessMatchups(leagueData.teams_matchups, league.id, season)
           matchupsProcessed += batchResult.processed
+          if (batchResult.error) {
+            errors.push(`Matchups (${leagueKey}): ${batchResult.error}`)
+          }
         } else {
           logger.info('No matchups data to process', { leagueKey })
+        }
+      } catch (error) {
+        errors.push(`Matchups (${leagueKey}): ${error instanceof Error ? error.message : 'Unknown error'}`)
       }
 
-      // Process additional data types
-      await this.processDraftResults(leagueData, season)
-      await this.processTransactions(leagueData, season, league.id)
+      // Process additional data types — their failures surface in errors[]
+      // instead of being swallowed (whole categories of data used to vanish
+      // while the run reported healthy)
+      errors.push(...await this.processDraftResults(leagueData, season, leagueKey))
+      errors.push(...await this.processTransactions(leagueData, season, league.id, leagueKey))
       
       // REMOVED: Weekly team stats processing - data already captured in Matchup table
       // The teams_matchups endpoint provides team_stats within each matchup
@@ -361,7 +365,6 @@ export class YahooSyncService {
       leaguesProcessed, 
       teamsProcessed, 
       matchupsProcessed, 
-      weeklyStatsProcessed: 0, // No longer processing separately
       errors 
     }
   }
@@ -395,6 +398,7 @@ export class YahooSyncService {
     return await prisma.league.upsert({
       where: { leagueKey },
       update: {
+        gameId: game.id,
         name: leagueInfo.name,
         url: leagueInfo.url,
         logoUrl: typeof leagueInfo.logo_url === 'string' ? leagueInfo.logo_url : null,
@@ -416,6 +420,7 @@ export class YahooSyncService {
       create: {
         leagueKey,
         leagueId: parseInt(leagueInfo.league_id),
+        gameId: game.id,
         name: leagueInfo.name,
         url: leagueInfo.url,
         logoUrl: typeof leagueInfo.logo_url === 'string' ? leagueInfo.logo_url : null,
@@ -437,12 +442,24 @@ export class YahooSyncService {
     })
   }
 
-  private async processTeam(teamData: any, leagueId: string, season: string) {
+  // Yahoo omits or malforms optional numeric fields often enough that a raw
+  // parseInt would feed NaN into Prisma and abort the whole league
+  private toIntOrNull(value: any): number | null {
+    const n = parseInt(value)
+    return Number.isNaN(n) ? null : n
+  }
+
+  private async processTeam(teamData: any, leagueId: string, season: string, leagueIsFinished: boolean) {
     const manager = teamData.managers?.manager
     const managerData = Array.isArray(manager) ? manager[0] : manager
 
+    const teamId = this.toIntOrNull(teamData.team_id)
+    if (teamId === null) {
+      throw new Error(`Team ${teamData.team_key} has non-numeric team_id: ${teamData.team_id}`)
+    }
+
     await prisma.team.upsert({
-      where: { 
+      where: {
         teamKey_season: {
           teamKey: teamData.team_key,
           season: season
@@ -451,26 +468,28 @@ export class YahooSyncService {
       update: {
         name: teamData.name,
         url: teamData.url,
-        numberOfMoves: parseInt(teamData.number_of_moves),
-        numberOfTrades: parseInt(teamData.number_of_trades),
+        numberOfMoves: this.toIntOrNull(teamData.number_of_moves),
+        numberOfTrades: this.toIntOrNull(teamData.number_of_trades),
         clinchedPlayoffs: teamData.clinched_playoffs === '1',
         managerNickname: managerData?.nickname,
         managerEmail: managerData?.email,
         managerIsCommissioner: managerData?.is_commissioner === '1',
+        isFinished: leagueIsFinished,
         season: season,
       },
       create: {
         teamKey: teamData.team_key,
-        teamId: parseInt(teamData.team_id),
+        teamId: teamId,
         leagueId: leagueId,
         name: teamData.name,
         url: teamData.url,
-        numberOfMoves: parseInt(teamData.number_of_moves),
-        numberOfTrades: parseInt(teamData.number_of_trades),
+        numberOfMoves: this.toIntOrNull(teamData.number_of_moves),
+        numberOfTrades: this.toIntOrNull(teamData.number_of_trades),
         clinchedPlayoffs: teamData.clinched_playoffs === '1',
         managerNickname: managerData?.nickname,
         managerEmail: managerData?.email,
         managerIsCommissioner: managerData?.is_commissioner === '1',
+        isFinished: leagueIsFinished,
         season: season,
       },
     })
@@ -511,7 +530,7 @@ export class YahooSyncService {
               },
             },
             data: {
-              rank: parseInt(standing.rank),
+              rank: this.toIntOrNull(standing.rank),
               wins: parseInt(standing.outcome_totals?.wins || '0'),
               losses: parseInt(standing.outcome_totals?.losses || '0'),
               ties: parseInt(standing.outcome_totals?.ties || '0'),
@@ -528,96 +547,6 @@ export class YahooSyncService {
       }
     } catch (error) {
       logger.error('Error in processStandings', error as Error, { standings })
-    }
-  }
-
-  private async processMatchup(matchupData: any, leagueId: string, season: string) {
-    try {
-      logger.info('Processing matchup', { 
-        week: matchupData.week, 
-        status: matchupData.status,
-        hasTeams: !!matchupData.teams,
-        teamCount: matchupData.teams?.count
-      })
-
-      const teams = Array.isArray(matchupData.teams?.team)
-        ? matchupData.teams.team
-        : [matchupData.teams?.team]
-
-      if (teams.length === 2 && teams[0] && teams[1]) {
-        const homeTeam = teams[0]
-        const awayTeam = teams[1]
-
-        logger.info('Processing teams in matchup', {
-          homeTeamKey: homeTeam.team_key,
-          awayTeamKey: awayTeam.team_key,
-          homeTeamPoints: homeTeam.team_points?.total,
-          awayTeamPoints: awayTeam.team_points?.total
-        })
-
-        // Generate a unique matchupId based on week and team keys
-        const week = parseInt(matchupData.week)
-        const team1Key = homeTeam.team_key
-        const team2Key = awayTeam.team_key
-        
-        // Create a unique ID by combining week + team keys (sorted for consistency)
-        const sortedTeamKeys = [team1Key, team2Key].sort()
-        const matchupId = parseInt(`${week}${sortedTeamKeys[0].split('.').pop()}${sortedTeamKeys[1].split('.').pop()}`)
-
-        // Store stat winners (if available in matchup data)
-        const statWinners = matchupData.stat_winners?.stat_winner
-        
-        // Weekly team stats are now stored in Matchup.team1Stats and Matchup.team2Stats
-
-        await prisma.matchup.upsert({
-          where: {
-            matchupId_season: {
-              matchupId: matchupId,
-              season: season,
-            },
-          },
-          update: {
-            week: week,
-            status: matchupData.status,
-            isPlayoffs: matchupData.is_playoffs === '1' || matchupData.is_playoffs === 1,
-            isConsolation: matchupData.is_consolation === '1' || matchupData.is_consolation === 1,
-            isTied: matchupData.is_tied === '1' || matchupData.is_tied === 1,
-            winnerTeamKey: matchupData.winner_team_key,
-            team1Points: homeTeam.team_points?.total ? parseFloat(homeTeam.team_points.total) : null,
-            team2Points: awayTeam.team_points?.total ? parseFloat(awayTeam.team_points.total) : null,
-            season: season,
-            weekStart: matchupData.week_start,
-            weekEnd: matchupData.week_end,
-            statWinners: JSON.stringify(matchupData.stat_winners),
-            team1Stats: JSON.stringify(homeTeam.team_stats),
-            team2Stats: JSON.stringify(awayTeam.team_stats)
-          },
-          create: {
-            matchupId: matchupId,
-            leagueId: leagueId,
-            week: week,
-            status: matchupData.status,
-            isPlayoffs: matchupData.is_playoffs === '1' || matchupData.is_playoffs === 1,
-            isConsolation: matchupData.is_consolation === '1' || matchupData.is_consolation === 1,
-            isTied: matchupData.is_tied === '1' || matchupData.is_tied === 1,
-            team1Key: team1Key,
-            team2Key: team2Key,
-            winnerTeamKey: matchupData.winner_team_key,
-            team1Points: homeTeam.team_points?.total ? parseFloat(homeTeam.team_points.total) : null,
-            team2Points: awayTeam.team_points?.total ? parseFloat(awayTeam.team_points.total) : null,
-            season: season,
-            weekStart: matchupData.week_start,
-            weekEnd: matchupData.week_end,
-            statWinners: JSON.stringify(matchupData.stat_winners),
-            team1Stats: JSON.stringify(homeTeam.team_stats),
-            team2Stats: JSON.stringify(awayTeam.team_stats)
-          },
-        })
-
-        logger.info('Successfully processed matchup', { matchupId, week })
-      }
-    } catch (error) {
-      logger.error('Error processing matchup', error as Error, { matchupData })
     }
   }
 
@@ -727,8 +656,9 @@ export class YahooSyncService {
       }
   }
 
-  // Process draft results
-  private async processDraftResults(leagueData: any, season: string) {
+  // Process draft results. Returns error strings (empty when healthy) so the
+  // caller surfaces failures instead of this data silently vanishing.
+  private async processDraftResults(leagueData: any, season: string, leagueKey: string): Promise<string[]> {
     try {
       // Access draft results from correct path
       if (leagueData.draftresults?.fantasy_content?.league?.draft_results?.draft_result) {
@@ -849,18 +779,23 @@ export class YahooSyncService {
           })
         }, { timeout: 60000 })
         
-        logger.info('Draft results processed with complete player metadata', { 
+        logger.info('Draft results processed with complete player metadata', {
           count: draftResults.length,
-          playersProcessed: playerMap.size 
+          playersProcessed: playerMap.size
         })
       }
+      return []
     } catch (error) {
       logger.error('Error processing draft results', error as Error)
+      return [`Draft results (${leagueKey}): ${error instanceof Error ? error.message : 'Unknown error'}`]
     }
   }
 
-  // Process transactions
-  private async processTransactions(leagueData: any, season: string, leagueId: string) {
+  // Process transactions. Returns error strings (empty when healthy).
+  // NOTE: the deleteMany below wipes ALL transactions for the season before
+  // re-inserting — safe only because this keeper chain has exactly one league
+  // per season (Transaction has no league column to scope by).
+  private async processTransactions(leagueData: any, season: string, leagueId: string, leagueKey: string): Promise<string[]> {
     try {
       // Access transactions from correct path
       if (leagueData.transactions?.fantasy_content?.league?.transactions?.transaction) {
@@ -923,8 +858,10 @@ export class YahooSyncService {
         
         logger.info('Transactions processed', { count: transactions.length })
       }
+      return []
     } catch (error) {
       logger.error('Error processing transactions', error as Error)
+      return [`Transactions (${leagueKey}): ${error instanceof Error ? error.message : 'Unknown error'}`]
     }
   }
 
@@ -934,12 +871,24 @@ export class YahooSyncService {
   // REMOVED: processGameMetadata method - GameMetadata model not in current schema
   // Game metadata can be stored in Game model if needed
 
+  // Collision-proof numeric matchup id. The old string-concatenation scheme
+  // (parseInt(`${week}${idA}${idB}`)) produced the same integer for distinct
+  // matchups once team ids reached 2 digits (e.g. w1 t1-vs-t12 === w1 t11-vs-t2),
+  // silently overwriting rows via the (matchupId, season) unique constraint.
+  // Safe for team ids < 1000 and any week; existing rows were backfilled to
+  // this scheme (old ids max out ~261010, new ids start at 1_001_002 — no overlap).
+  private buildMatchupId(week: number, teamKeyA: string, teamKeyB: string): number {
+    const idA = parseInt(teamKeyA.split('.').pop()!)
+    const idB = parseInt(teamKeyB.split('.').pop()!)
+    return week * 1_000_000 + Math.min(idA, idB) * 1000 + Math.max(idA, idB)
+  }
+
   // Batch process matchups for better performance
   private async batchProcessMatchups(
-    matchupsData: any, 
-    leagueId: string, 
+    matchupsData: any,
+    leagueId: string,
     season: string
-  ): Promise<{ processed: number }> {
+  ): Promise<{ processed: number; error?: string }> {
     try {
       const teams = Array.isArray(matchupsData.fantasy_content.league.teams.team)
         ? matchupsData.fantasy_content.league.teams.team
@@ -973,7 +922,7 @@ export class YahooSyncService {
       // Reconstruct full matchups and collect for batch processing
       const matchupsToProcess: any[] = []
       
-      for (const [key, matchup] of matchupMap) {
+      for (const matchup of matchupMap.values()) {
         const week = matchup.week
         const team1Key = matchup.teamKey
         
@@ -994,7 +943,6 @@ export class YahooSyncService {
               week: week,
               week_start: matchup.matchupData.week_start,
               week_end: matchup.matchupData.week_end,
-              matchup_id: `${week}-${Math.min(parseInt(team1Key.split('.t.')[1]), parseInt(opponentKey.split('.t.')[1]))}-${Math.max(parseInt(team1Key.split('.t.')[1]), parseInt(opponentKey.split('.t.')[1]))}`,
               status: matchup.matchupData.status,
               is_playoffs: matchup.matchupData.is_playoffs,
               is_consolation: matchup.matchupData.is_consolation,
@@ -1057,9 +1005,8 @@ export class YahooSyncService {
                 const week = parseInt(matchupData.week)
                 const team1Key = homeTeam.team_key
                 const team2Key = awayTeam.team_key
-                
-                const sortedTeamKeys = [team1Key, team2Key].sort()
-                const matchupId = parseInt(`${week}${sortedTeamKeys[0].split('.').pop()}${sortedTeamKeys[1].split('.').pop()}`)
+
+                const matchupId = this.buildMatchupId(week, team1Key, team2Key)
 
                 promises.push(
                   tx.matchup.upsert({
@@ -1135,47 +1082,53 @@ export class YahooSyncService {
 
   // Smart caching helper methods
   private async shouldFetchMatchups(
-    leagueInfo: any, 
+    leagueInfo: any,
     forceRefresh: boolean
   ): Promise<boolean> {
     if (forceRefresh) return true
-    
-    // Skip for finished seasons with existing data
+
+    // Skip for finished seasons whose stored matchups reach the final week.
+    // A bare count>0 would let a partially-written season (killed mid-run)
+    // skip re-fetching forever.
     if (leagueInfo.is_finished === '1' || leagueInfo.is_finished === 1) {
-      const count = await prisma.matchup.count({
+      const endWeek = parseInt(leagueInfo.end_week) || null
+      const stored = await prisma.matchup.aggregate({
         where: {
           league: { leagueKey: leagueInfo.league_key },
           season: String(leagueInfo.season)
-        }
+        },
+        _count: true,
+        _max: { week: true }
       })
-      
-      if (count > 0) {
-        logger.info('Skipping matchups - season finished, data exists', {
+
+      const complete = stored._count > 0 && (!endWeek || (stored._max.week ?? 0) >= endWeek)
+      if (complete) {
+        logger.info('Skipping matchups - season finished, data complete through final week', {
           leagueKey: leagueInfo.league_key,
           season: leagueInfo.season,
-          matchupCount: count
+          matchupCount: stored._count,
+          maxWeek: stored._max.week,
+          endWeek
         })
         return false
       }
     }
-    
+
     return true
   }
 
-  private async verifyCompleteData(leagueId: string): Promise<boolean> {
+  private async verifyCompleteData(leagueId: string, leagueKey: string): Promise<boolean> {
     const [teams, matchups, draftResults] = await Promise.all([
       prisma.team.count({ where: { leagueId } }),
       prisma.matchup.count({ where: { leagueId } }),
-      prisma.draftResult.count({ where: { teamKey: { contains: leagueId } } })
+      // DraftResult has no league relation; team keys embed the league key
+      // (e.g. "453.l.32566.t.5"). The old check matched against the internal
+      // cuid, which never hit, so finished leagues were re-synced every run.
+      prisma.draftResult.count({ where: { teamKey: { startsWith: `${leagueKey}.t.` } } })
     ])
-    
+
     return teams > 0 && matchups > 0 && draftResults > 0
   }
-}
-
-// Helper function to get current season (future-proof: 2025, 2026, etc.)
-export function getCurrentSeason(): string {
-  return new Date().getFullYear().toString()
 }
 
 // Singleton instance

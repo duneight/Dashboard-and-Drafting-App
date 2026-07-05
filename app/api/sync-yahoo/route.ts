@@ -56,9 +56,27 @@ export async function POST(request: NextRequest) {
     }
 
     logger.info('Starting Yahoo data sync', syncOptions)
-    
+
     const syncService = await getYahooSyncService()
     const response = await syncService.syncAllLeagues(syncOptions)
+
+    // Same health semantics as /api/cron: benign "skipping" messages are not
+    // failures, but real errors — or a run that touched nothing at all — must
+    // not report success (the old always-200 behavior masked total failures).
+    const skipped = response.errors.filter((e) => /skipping/i.test(e))
+    const realErrors = response.errors.filter((e) => !/skipping/i.test(e))
+    const hadActivity = response.leaguesProcessed > 0 || skipped.length > 0
+    const healthy = hadActivity && realErrors.length === 0
+
+    if (!healthy) {
+      logger.error('Yahoo data sync unhealthy', undefined, { ...response, realErrors })
+      return NextResponse.json({
+        success: false,
+        mode: syncOptions.mode,
+        data: response,
+        error: realErrors.length > 0 ? realErrors.join('; ') : 'No leagues were processed',
+      } as ApiResponse<SyncResponse>, { status: 500 })
+    }
 
     logger.info('Yahoo data sync completed', response)
 
@@ -66,7 +84,7 @@ export async function POST(request: NextRequest) {
       success: true,
       mode: syncOptions.mode,
       data: response,
-      message: `Sync completed: ${response.leaguesProcessed} leagues, ${response.teamsProcessed} teams, ${response.matchupsProcessed} matchups processed`,
+      message: `Sync completed: ${response.leaguesProcessed} leagues, ${response.teamsProcessed} teams, ${response.matchupsProcessed} matchups processed (${skipped.length} skipped)`,
     } as ApiResponse<SyncResponse>)
 
   } catch (error) {

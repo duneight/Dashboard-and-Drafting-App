@@ -83,7 +83,6 @@ export async function GET(request: NextRequest) {
       leaguesProcessed: result.leaguesProcessed,
       teamsProcessed: result.teamsProcessed,
       matchupsProcessed: result.matchupsProcessed,
-      weeklyStatsProcessed: result.weeklyStatsProcessed,
       skipped: skipped.length,
       realErrors,
     }

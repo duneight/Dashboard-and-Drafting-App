@@ -63,6 +63,7 @@ interface YahooLeague {
 
 export class YahooApiClient {
   private credentials: YahooCredentials | null = null
+  private refreshPromise: Promise<void> | null = null
   private axiosInstance: AxiosInstance
   private xmlParser: XMLParser
   private readonly authHeader: string
@@ -87,7 +88,18 @@ export class YahooApiClient {
     await this.refreshCredentials()
   }
 
-  private async refreshCredentials(): Promise<void> {
+  // Serialized: concurrent league syncs share this client, and simultaneous
+  // refreshes would overwrite each other's credentials mid-flight.
+  private refreshCredentials(): Promise<void> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.doRefreshCredentials().finally(() => {
+        this.refreshPromise = null
+      })
+    }
+    return this.refreshPromise
+  }
+
+  private async doRefreshCredentials(): Promise<void> {
     try {
       logger.info('Refreshing Yahoo API credentials')
       
@@ -119,38 +131,39 @@ export class YahooApiClient {
     }
   }
 
-  async makeApiRequest(url: string, retryCount = 1, delay = 4000): Promise<any> {
+  async makeApiRequest(url: string, retryCount = 1, delay = 4000, timeoutMs?: number): Promise<any> {
     try {
       logger.debug('Making API request', { url })
-      
+
       const response = await this.axiosInstance.get(url, {
         headers: {
           Authorization: `Bearer ${this.credentials!.access_token}`,
           'Content-Type': 'application/x-www-form-urlencoded',
         },
+        ...(timeoutMs ? { timeout: timeoutMs } : {}),
       })
 
       logger.debug('API request successful, parsing XML response')
       return this.xmlParser.parse(response.data)
     } catch (error: any) {
       logger.error('Error during API request', error as Error, { url })
-      
+
       if (error.response?.status === 401 && retryCount > 0) {
         logger.info('Access token expired, refreshing credentials')
         await this.refreshCredentials()
-        return this.makeApiRequest(url, retryCount - 1, delay * 2)
+        return this.makeApiRequest(url, retryCount - 1, delay * 2, timeoutMs)
       }
-      
+
       if (error.response?.status === 429 && retryCount > 0) {
         logger.warn('Rate limited, waiting before retry', { delay })
         await new Promise(resolve => setTimeout(resolve, delay))
-        return this.makeApiRequest(url, retryCount - 1, delay * 2)
+        return this.makeApiRequest(url, retryCount - 1, delay * 2, timeoutMs)
       }
 
       if (retryCount > 0) {
         logger.info('Retrying API request', { retryCount })
         await new Promise(resolve => setTimeout(resolve, delay))
-        return this.makeApiRequest(url, retryCount - 1, delay * 2)
+        return this.makeApiRequest(url, retryCount - 1, delay * 2, timeoutMs)
       }
 
       throw error
@@ -194,22 +207,13 @@ export class YahooApiClient {
   }
 
   async fetchTeamsMatchupsOptimized(leagueKey: string): Promise<any> {
-    // This endpoint is slow because it fetches ALL matchup history
-    // Fetch separately with longer timeout
+    // This endpoint is slow because it fetches ALL matchup history, so it
+    // gets a longer timeout — but it goes through makeApiRequest like every
+    // other call so it still benefits from 401 token-refresh and retries.
     logger.info('Fetching teams matchups (slow endpoint)', { leagueKey })
-    
+
     const url = `${this.yahooBaseUrl}/league/${leagueKey}/teams;out=matchups`
-    
-    // Use longer timeout for this endpoint
-    const response = await this.axiosInstance.get(url, {
-      headers: {
-        Authorization: `Bearer ${this.credentials!.access_token}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      timeout: 60000, // 60 seconds for matchups endpoint
-    })
-    
-    return this.xmlParser.parse(response.data)
+    return this.makeApiRequest(url, 1, 4000, 60000)
   }
 
   async getAllLeagueKeys(): Promise<LeagueKey[]> {
