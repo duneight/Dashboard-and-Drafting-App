@@ -9,8 +9,6 @@ const envSchema = z.object({
   CRON_ALERT_WEBHOOK: z.string().url().optional(),
   NEXTAUTH_URL: z.string().url().optional(),
   NEXTAUTH_SECRET: z.string().min(1).optional(),
-  NOTIFICATIONS_ENABLED: z.string().optional(),
-  NOTIFICATION_THROTTLE_MAX: z.string().optional(),
 })
 
 // During build time, environment variables may not be available
@@ -26,6 +24,4 @@ export const env = envResult.success ? envResult.data : {
   CRON_ALERT_WEBHOOK: process.env.CRON_ALERT_WEBHOOK,
   NEXTAUTH_URL: process.env.NEXTAUTH_URL,
   NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET,
-  NOTIFICATIONS_ENABLED: process.env.NOTIFICATIONS_ENABLED,
-  NOTIFICATION_THROTTLE_MAX: process.env.NOTIFICATION_THROTTLE_MAX,
 }
