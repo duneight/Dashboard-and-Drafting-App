@@ -1,5 +1,5 @@
 import { SharedTeamData } from '@/lib/analytics/sharedData'
-import { latestSeason } from '@/lib/analytics/types'
+import { fromFinishedSeason } from '@/lib/analytics/types'
 import { getCurrentNhlSeason } from '@/lib/season'
 
 export interface ManagerCareerStats {
@@ -44,9 +44,6 @@ export class ManagerStatsAnalytics {
     // Get all teams grouped by manager
     const teamData = teams || await SharedTeamData.getAllTeams()
 
-    // Find the most current season
-    const currentSeason = latestSeason(teamData)
-
     // Group by manager and aggregate stats
     const managerMap = new Map<string, ManagerCareerStats>()
     const currentNhlSeason = getCurrentNhlSeason()
@@ -89,8 +86,8 @@ export class ManagerStatsAnalytics {
       stats.totalTrades += team.numberOfTrades || 0
       stats.totalTransactions = stats.totalMoves + stats.totalTrades
 
-      // Determine if season is finished
-      const isSeasonFinished = team.season !== currentSeason || team.isFinished
+      // Completed season per Yahoo's league-level flag
+      const isSeasonFinished = fromFinishedSeason(team)
 
       // Track championships (rank 1)
       if (team.rank === 1 && isSeasonFinished) {

@@ -5,7 +5,7 @@ import {
   collectWeeklyScores,
   computeStreaks,
   deduplicateAndLimit,
-  latestSeason,
+  fromFinishedSeason,
 } from './types'
 import { getManagerAvatarUrl, getManagerDisplayName } from '@/lib/avatars'
 
@@ -24,14 +24,9 @@ export class HallOfFameAnalytics {
   async getDynastyKing(teams?: any[]): Promise<HallOfFameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
 
-    // Find the most current season
-    const currentSeason = latestSeason(teamData)
-
-    // Filter champions (rank 1) with proper finished logic
-    const champions = teamData.filter(t => {
-      const isSeasonFinished = t.season !== currentSeason || t.isFinished
-      return t.rank === 1 && isSeasonFinished
-    })
+    // Champions from completed seasons only (Yahoo's league-level flag) —
+    // the latest season counts as soon as it's over, not once the next starts
+    const champions = teamData.filter(t => t.rank === 1 && fromFinishedSeason(t))
 
     // Group by manager and calculate average finish for tiebreaker
     const counts = new Map<string, { count: number; seasons: string[]; averageFinish: number }>()
@@ -49,10 +44,8 @@ export class HallOfFameAnalytics {
 
     // Then calculate average finish for each manager with championships
     for (const [manager, data] of counts.entries()) {
-      const managerTeams = teamData.filter(t => {
-        const isSeasonFinished = t.season !== currentSeason || t.isFinished
-        return (t.managerNickname || 'Unknown') === manager && isSeasonFinished
-      })
+      const managerTeams = teamData.filter(t =>
+        (t.managerNickname || 'Unknown') === manager && fromFinishedSeason(t))
 
       if (managerTeams.length > 0) {
         const totalRank = managerTeams.reduce((sum, team) => sum + (team.rank || 0), 0)
@@ -151,9 +144,8 @@ export class HallOfFameAnalytics {
   async getPlayoffWarrior(matchups?: any[]): Promise<HallOfFameEntry[]> {
     const allMatchups = matchups || await SharedTeamData.getAllMatchups()
 
-    // Detect current season and filter it out
-    const currentSeason = latestSeason(allMatchups)
-    const filteredMatchups = allMatchups.filter(m => m.season !== currentSeason)
+    // Only count completed seasons (Yahoo's league-level flag)
+    const filteredMatchups = allMatchups.filter(fromFinishedSeason)
 
     const playoffMatchups = filteredMatchups.filter(m => m.isPlayoffs === true && m.winnerTeamKey !== null)
 

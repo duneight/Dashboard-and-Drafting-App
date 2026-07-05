@@ -1,4 +1,5 @@
 import { SharedTeamData } from './sharedData'
+import { fromFinishedSeason } from './types'
 
 export interface LeagueCompetitivenessData {
   season: string
@@ -139,12 +140,8 @@ export class LeagueTrendsAnalytics {
   async getChampionshipSuccessByPlayoffSeed(teams?: any[]): Promise<ChampionshipSeedSuccess[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
     
-    // Find most current season
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
-    
     // Filter to finished seasons only
-    const finishedTeams = teamData.filter(t => t.season !== currentSeason || t.isFinished)
+    const finishedTeams = teamData.filter(fromFinishedSeason)
     
     const seedMap = new Map<number, { appearances: number; championships: number }>()
     
@@ -274,10 +271,6 @@ export class LeagueTrendsAnalytics {
   async getExperienceCurveAnalysis(teams?: any[]): Promise<ExperienceCurve[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
     
-    // Find most current season to determine years in league
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
-    
     // Count seasons per manager
     const managerSeasons = new Map<string, Set<string>>()
     const managerStats = new Map<string, { wins: number; games: number; championships: number }>()
@@ -297,7 +290,7 @@ export class LeagueTrendsAnalytics {
       stats.games += team.wins + team.losses + team.ties
       
       // Championship logic with proper finished check
-      const isSeasonFinished = team.season !== currentSeason || team.isFinished
+      const isSeasonFinished = fromFinishedSeason(team)
       if (team.rank === 1 && isSeasonFinished) {
         stats.championships++
       }
@@ -337,10 +330,6 @@ export class LeagueTrendsAnalytics {
   async getTransactionVolumeVsSuccess(teams?: any[]): Promise<TransactionCorrelation[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
     
-    // Find most current season
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
-    
     // Aggregate by manager
     const managerMap = new Map<string, {
       moves: number
@@ -363,7 +352,7 @@ export class LeagueTrendsAnalytics {
       stats.wins += team.wins
       stats.games += team.wins + team.losses + team.ties
       
-      const isSeasonFinished = team.season !== currentSeason || team.isFinished
+      const isSeasonFinished = fromFinishedSeason(team)
       if (team.rank === 1 && isSeasonFinished) {
         stats.championships++
       }
@@ -385,10 +374,6 @@ export class LeagueTrendsAnalytics {
   async getRegularSeasonVsPlayoffPerformance(matchups?: any[], teams?: any[]): Promise<RegularVsPlayoffPerformance[]> {
     const matchupData = matchups || await SharedTeamData.getAllMatchups()
     const teamData = teams || await SharedTeamData.getAllTeams()
-    
-    // Find most current season
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
     
     const managerStats = new Map<string, {
       regularWins: number
@@ -442,7 +427,7 @@ export class LeagueTrendsAnalytics {
       
       const stats = managerStats.get(manager)!
       
-      const isSeasonFinished = team.season !== currentSeason || team.isFinished
+      const isSeasonFinished = fromFinishedSeason(team)
       if (team.rank && team.rank <= 6 && isSeasonFinished) {
         stats.playoffAppearances++
       }
@@ -475,10 +460,6 @@ export class LeagueTrendsAnalytics {
   async getRegularSeasonVsPlayoffScoring(matchups?: any[], teams?: any[]): Promise<RegularVsPlayoffScoring[]> {
     const matchupData = matchups || await SharedTeamData.getAllMatchups()
     const teamData = teams || await SharedTeamData.getAllTeams()
-    
-    // Find most current season
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
     
     const managerStats = new Map<string, {
       regularSeasonPoints: number
@@ -526,7 +507,7 @@ export class LeagueTrendsAnalytics {
       
       const stats = managerStats.get(manager)!
       
-      const isSeasonFinished = team.season !== currentSeason || team.isFinished
+      const isSeasonFinished = fromFinishedSeason(team)
       if (team.rank && team.rank <= 6 && isSeasonFinished) {
         stats.playoffAppearances++
       }
@@ -729,12 +710,8 @@ export class LeagueTrendsAnalytics {
   async getPlayoffByeAdvantageAnalysis(teams?: any[]) {
     const teamData = teams || await SharedTeamData.getAllTeams()
     
-    // Find most current season
-    const seasons = [...new Set(teamData.map(t => t.season))].sort()
-    const currentSeason = seasons[seasons.length - 1]
-    
     // Filter to finished seasons
-    const finishedTeams = teamData.filter(t => t.season !== currentSeason || t.isFinished)
+    const finishedTeams = teamData.filter(fromFinishedSeason)
     
     // Top 2 seeds get byes
     const byeTeams = finishedTeams.filter(t => t.rank && t.rank <= 2)

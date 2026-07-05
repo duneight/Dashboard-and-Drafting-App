@@ -4,7 +4,7 @@ import {
   collectWeeklyScores,
   computeStreaks,
   deduplicateAndLimit,
-  latestSeason,
+  fromFinishedSeason,
 } from './types'
 import { getManagerAvatarUrl, getManagerDisplayName } from '@/lib/avatars'
 
@@ -22,9 +22,9 @@ export class WallOfShameAnalytics {
   async getEternalLast(teams?: any[]): Promise<WallOfShameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
 
-    // Detect current season and filter it out
-    const currentSeason = latestSeason(teamData)
-    const filteredTeams = teamData.filter(t => t.season !== currentSeason)
+    // Only count completed seasons (Yahoo's league-level isFinished flag) —
+    // the latest season counts as soon as it's over, not once the next starts
+    const filteredTeams = teamData.filter(fromFinishedSeason)
 
     // Calculate average lowest ranking per manager
     const managerStats = new Map<string, { totalRank: number; seasons: number }>()
@@ -62,9 +62,9 @@ export class WallOfShameAnalytics {
   async getCloseButNoCigar(teams?: any[]): Promise<WallOfShameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
 
-    // Detect current season and filter it out
-    const currentSeason = latestSeason(teamData)
-    const filteredTeams = teamData.filter(t => t.season !== currentSeason)
+    // Only count completed seasons (Yahoo's league-level isFinished flag) —
+    // the latest season counts as soon as it's over, not once the next starts
+    const filteredTeams = teamData.filter(fromFinishedSeason)
 
     // Track near-misses per manager
     const nearMisses = new Map<string, { secondPlaces: number; thirdPlaces: number; seasons: number }>()
@@ -133,14 +133,8 @@ export class WallOfShameAnalytics {
     // Get all champions with proper finished logic
     const allTeams = teams || await SharedTeamData.getAllTeams()
 
-    // Find the most current season
-    const currentSeason = latestSeason(allTeams)
-
-    // Filter champions with proper finished logic
-    const champions = allTeams.filter(t => {
-      const isSeasonFinished = t.season !== currentSeason || t.isFinished
-      return t.rank === 1 && isSeasonFinished
-    })
+    // Champions from completed seasons only (Yahoo's league-level flag)
+    const champions = allTeams.filter(t => t.rank === 1 && fromFinishedSeason(t))
 
     const championManagers = new Set(champions.map(c => c.managerNickname))
 
@@ -181,9 +175,9 @@ export class WallOfShameAnalytics {
   async getRockBottom(teams?: any[]): Promise<WallOfShameEntry[]> {
     const teamData = teams || await SharedTeamData.getAllTeams()
 
-    // Detect current season and filter it out
-    const currentSeason = latestSeason(teamData)
-    const filteredTeams = teamData.filter(t => t.season !== currentSeason)
+    // Only count completed seasons (Yahoo's league-level isFinished flag) —
+    // the latest season counts as soon as it's over, not once the next starts
+    const filteredTeams = teamData.filter(fromFinishedSeason)
 
     const sortedTeams = [...filteredTeams]
       .sort((a, b) => {
@@ -311,9 +305,8 @@ export class WallOfShameAnalytics {
   async getTheSnooze(matchups?: any[]): Promise<WallOfShameEntry[]> {
     const allMatchups = matchups || await SharedTeamData.getAllMatchups()
 
-    // Detect current season and filter it out
-    const currentSeason = latestSeason(allMatchups)
-    const filteredMatchups = allMatchups.filter(m => m.season !== currentSeason)
+    // Only count completed seasons (Yahoo's league-level flag)
+    const filteredMatchups = allMatchups.filter(fromFinishedSeason)
 
     const scores = collectWeeklyScores(filteredMatchups, 'low')
 

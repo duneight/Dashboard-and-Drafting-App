@@ -24,12 +24,18 @@ export function deduplicateAndLimit(entries: AnalyticsEntry[]): AnalyticsEntry[]
 }
 
 /**
- * The latest (lexicographically greatest) season present in the data.
- * Seasons are year strings, so lexicographic sort == chronological sort.
+ * Whether a shared team/matchup row belongs to a completed season, per
+ * Yahoo's league-level isFinished flag (joined onto every row by
+ * SharedTeamData).
+ *
+ * Use this — NOT "is it the latest season in the data" — to decide whether
+ * ranks/championships count. Between a season ending and the next one being
+ * synced, the latest season IS finished, and excluding it hides the newest
+ * champion from every record (e.g. a manager still listed under "no
+ * championships" after winning the just-completed season).
  */
-export function latestSeason(data: Array<{ season: string }>): string {
-  const seasons = [...new Set(data.map(t => t.season))].sort()
-  return seasons[seasons.length - 1]
+export function fromFinishedSeason(row: { league?: { isFinished?: boolean | null } | null }): boolean {
+  return row.league?.isFinished ?? false
 }
 
 export interface StreakRecord {

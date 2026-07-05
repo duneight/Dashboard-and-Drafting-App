@@ -168,6 +168,11 @@ export class SharedTeamData {
               managerNickname: true,
             },
           },
+          league: {
+            select: {
+              isFinished: true,
+            },
+          },
         },
         orderBy: { season: 'desc' }
       })
